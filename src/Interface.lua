@@ -57,7 +57,7 @@ return function(ctx)
     local close=headerButton("Close","×",-43);local minimize=headerButton("Minimize","−",-78)
     local side=make("Frame",{Name="Sidebar",Position=UDim2.fromOffset(0,64),Size=UDim2.new(0,136,1,-64),BackgroundColor3=C.Panel,BorderSizePixel=0},surface)
     local content=make("Frame",{Position=UDim2.fromOffset(136,64),Size=UDim2.new(1,-136,1,-91),BackgroundTransparency=1,ClipsDescendants=true},surface)
-    local footer=text(surface,"N0VA_0100  /  RIFT UF 1.0",9,C.Sub,UDim2.new(0,151,1,-23),UDim2.new(1,-166,0,18))
+    local footer=text(surface,"N0VA_0100  /  RIFT UF 1.1",9,C.Sub,UDim2.new(0,151,1,-23),UDim2.new(1,-166,0,18))
     local marker=make("Frame",{Position=UDim2.fromOffset(0,24),Size=UDim2.fromOffset(3,22),BackgroundColor3=C.Accent,BorderSizePixel=0},side);round(marker,2)
     local pages,tabs,selected={},{},"football"
     local function select(id)
@@ -134,6 +134,23 @@ return function(ctx)
         local b=make("TextButton",{Name=name,Text=title,Size=UDim2.new(1,0,0,37),Font=Enum.Font.GothamBold,TextSize=12,
             TextColor3=C.Text,BackgroundColor3=C.Raised,AutoButtonColor=false,BorderSizePixel=0},parent);round(b,8);hover(b);connect(b.Activated,fn);return b
     end
+    local qb=section(M.football,"QB ASSIST","Gentle camera lead toward a confirmed teammate near your aim. Hold the button or right mouse; throwing stays manual. Does not calculate the game's throw power or guarantee completions.")
+    toggle(qb,"QBAim","Enable QB aim assistance")
+    local hold=button(qb,"HoldQB","HOLD QB ASSIST",function() end)
+    connect(hold.InputBegan,function(input)
+        if input.UserInputType==Enum.UserInputType.Touch or input.UserInputType==Enum.UserInputType.MouseButton1 then API.HoldQB(true,input) end
+    end)
+    slider(qb,"AimCone","Aim cone (degrees)",3,12)
+    slider(qb,"AimStrength","Aim response",2,8)
+    slider(qb,"LeadTime","Receiver lead (seconds)",0,.4)
+    slider(qb,"AimRange","Receiver range",25,220)
+    toggle(qb,"ReceiverMarker","Show selected receiver")
+    local qbStatus=text(qb,"Off",10,C.Sub,nil,UDim2.new(1,0,0,32));qbStatus.TextWrapped=true
+    local catching=section(M.football,"CATCH ASSIST","Requests the visible native catch button for a nearby incoming football. Requires a detected catch button and executor signal support; no hitbox or remote changes.")
+    toggle(catching,"AutoCatch","Auto catch input")
+    slider(catching,"CatchDistance","Request distance (studs)",2,6)
+    toggle(catching,"IncomingAlert","Incoming football alert")
+    local catchStatus=text(catching,"Off",10,C.Sub,nil,UDim2.new(1,0,0,38));catchStatus.TextWrapped=true
     local ball=section(M.football,"LIVE FOOTBALL","Tracks a replicated Football or MatchBall. If no matching object is present, the status says so rather than guessing a remote.")
     toggle(ball,"BallHighlight","Highlight football")
     toggle(ball,"BallName","Football label")
@@ -213,6 +230,10 @@ return function(ctx)
         end
         for _,paint in ipairs(paints) do paint() end
         ballStatus.Text=API.Status
+        if API.Assists then
+            qbStatus.Text=API.Assists.AimStatus
+            catchStatus.Text=API.Assists.CatchStatus..(API.Assists.Alert~="" and " · "..API.Assists.Alert or "")
+        end
 
     end
     function M.Destroy()

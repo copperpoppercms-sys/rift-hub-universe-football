@@ -1,7 +1,7 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Rift Universe Football — editable full script</title><style>
 :root{color-scheme:dark;font-family:system-ui;background:#101623;color:#e5efe7}body{max-width:1000px;margin:auto;padding:20px}h1{font-size:24px}p{color:#afc7b5;line-height:1.5}.tools{display:flex;flex-wrap:wrap;gap:10px;margin:18px 0}button{background:#9b2438;color:white;border:1px solid #d8485d;border-radius:8px;padding:12px 18px;font:600 14px system-ui}textarea{box-sizing:border-box;width:100%;height:65vh;min-height:320px;padding:14px;background:#111b2b;color:#e3efe6;border:1px solid #355540;border-radius:10px;font:13px/1.6 ui-monospace,monospace;tab-size:4;white-space:pre}#status{min-height:28px;color:#a8eaba}</style></head><body>
-<h1>Rift Universe Football · 1.0</h1><p>Animated Rift interface for live football tracking, team-colored player highlights, camera controls and adjustable speed. All optional features start off. Type directly in the full code below; Copy and Download use your edits. Game-specific passing/catching calls are not assumed.</p><div class="tools"><button id="copy">Copy all code</button><button id="select">Select all</button><button id="download">Download .lua</button></div><div id="status" role="status" aria-live="polite">The full script below is editable.</div><textarea id="source" aria-label="Full editable Luau script" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off" wrap="off">-- RiftHub-Entry: universe-football
--- Rift Hub / Universe Football / 1.0
+<h1>Rift Universe Football · 1.1</h1><p>Animated Rift interface for live football tracking, team-colored player highlights, camera controls and adjustable speed. All optional features start off. Type directly in the full code below; Copy and Download use your edits. Includes hold-to-aim teammate camera lead, native catch-input assist and incoming-ball alerts. No throw-power, hitbox or catch-success guarantees.</p><div class="tools"><button id="copy">Copy all code</button><button id="select">Select all</button><button id="download">Download .lua</button></div><div id="status" role="status" aria-live="polite">The full script below is editable.</div><textarea id="source" aria-label="Full editable Luau script" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off" wrap="off">-- RiftHub-Entry: universe-football
+-- Rift Hub / Universe Football / 1.1
 local env=type(getgenv)==&quot;function&quot; and getgenv() or _G
 local prior=env.RiftUniverseFootball
 if type(prior)==&quot;table&quot; and type(prior.Unload)==&quot;function&quot; then pcall(prior.Unload) end
@@ -121,7 +121,7 @@ return function(ctx)
     local close=headerButton(&quot;Close&quot;,&quot;×&quot;,-43);local minimize=headerButton(&quot;Minimize&quot;,&quot;−&quot;,-78)
     local side=make(&quot;Frame&quot;,{Name=&quot;Sidebar&quot;,Position=UDim2.fromOffset(0,64),Size=UDim2.new(0,136,1,-64),BackgroundColor3=C.Panel,BorderSizePixel=0},surface)
     local content=make(&quot;Frame&quot;,{Position=UDim2.fromOffset(136,64),Size=UDim2.new(1,-136,1,-91),BackgroundTransparency=1,ClipsDescendants=true},surface)
-    local footer=text(surface,&quot;N0VA_0100  /  RIFT UF 1.0&quot;,9,C.Sub,UDim2.new(0,151,1,-23),UDim2.new(1,-166,0,18))
+    local footer=text(surface,&quot;N0VA_0100  /  RIFT UF 1.1&quot;,9,C.Sub,UDim2.new(0,151,1,-23),UDim2.new(1,-166,0,18))
     local marker=make(&quot;Frame&quot;,{Position=UDim2.fromOffset(0,24),Size=UDim2.fromOffset(3,22),BackgroundColor3=C.Accent,BorderSizePixel=0},side);round(marker,2)
     local pages,tabs,selected={},{},&quot;football&quot;
     local function select(id)
@@ -198,6 +198,23 @@ return function(ctx)
         local b=make(&quot;TextButton&quot;,{Name=name,Text=title,Size=UDim2.new(1,0,0,37),Font=Enum.Font.GothamBold,TextSize=12,
             TextColor3=C.Text,BackgroundColor3=C.Raised,AutoButtonColor=false,BorderSizePixel=0},parent);round(b,8);hover(b);connect(b.Activated,fn);return b
     end
+    local qb=section(M.football,&quot;QB ASSIST&quot;,&quot;Gentle camera lead toward a confirmed teammate near your aim. Hold the button or right mouse; throwing stays manual. Does not calculate the game&#x27;s throw power or guarantee completions.&quot;)
+    toggle(qb,&quot;QBAim&quot;,&quot;Enable QB aim assistance&quot;)
+    local hold=button(qb,&quot;HoldQB&quot;,&quot;HOLD QB ASSIST&quot;,function() end)
+    connect(hold.InputBegan,function(input)
+        if input.UserInputType==Enum.UserInputType.Touch or input.UserInputType==Enum.UserInputType.MouseButton1 then API.HoldQB(true,input) end
+    end)
+    slider(qb,&quot;AimCone&quot;,&quot;Aim cone (degrees)&quot;,3,12)
+    slider(qb,&quot;AimStrength&quot;,&quot;Aim response&quot;,2,8)
+    slider(qb,&quot;LeadTime&quot;,&quot;Receiver lead (seconds)&quot;,0,.4)
+    slider(qb,&quot;AimRange&quot;,&quot;Receiver range&quot;,25,220)
+    toggle(qb,&quot;ReceiverMarker&quot;,&quot;Show selected receiver&quot;)
+    local qbStatus=text(qb,&quot;Off&quot;,10,C.Sub,nil,UDim2.new(1,0,0,32));qbStatus.TextWrapped=true
+    local catching=section(M.football,&quot;CATCH ASSIST&quot;,&quot;Requests the visible native catch button for a nearby incoming football. Requires a detected catch button and executor signal support; no hitbox or remote changes.&quot;)
+    toggle(catching,&quot;AutoCatch&quot;,&quot;Auto catch input&quot;)
+    slider(catching,&quot;CatchDistance&quot;,&quot;Request distance (studs)&quot;,2,6)
+    toggle(catching,&quot;IncomingAlert&quot;,&quot;Incoming football alert&quot;)
+    local catchStatus=text(catching,&quot;Off&quot;,10,C.Sub,nil,UDim2.new(1,0,0,38));catchStatus.TextWrapped=true
     local ball=section(M.football,&quot;LIVE FOOTBALL&quot;,&quot;Tracks a replicated Football or MatchBall. If no matching object is present, the status says so rather than guessing a remote.&quot;)
     toggle(ball,&quot;BallHighlight&quot;,&quot;Highlight football&quot;)
     toggle(ball,&quot;BallName&quot;,&quot;Football label&quot;)
@@ -277,6 +294,10 @@ return function(ctx)
         end
         for _,paint in ipairs(paints) do paint() end
         ballStatus.Text=API.Status
+        if API.Assists then
+            qbStatus.Text=API.Assists.AimStatus
+            catchStatus.Text=API.Assists.CatchStatus..(API.Assists.Alert~=&quot;&quot; and &quot; · &quot;..API.Assists.Alert or &quot;&quot;)
+        end
 
     end
     function M.Destroy()
@@ -289,17 +310,186 @@ return function(ctx)
 end
 
 end)()
+local Assists=(function()
+-- Opt-in camera lead and bounded native catch input. Never modifies a throw packet or catch hitbox.
+return function(ctx)
+ local Players=game:GetService(&quot;Players&quot;)
+ local Input=game:GetService(&quot;UserInputService&quot;)
+ local player=Players.LocalPlayer
+ local cfg=ctx.Config
+ local M={Held=false,Target=nil,AimStatus=&quot;Off&quot;,CatchStatus=&quot;Off&quot;,CatchRequests=0,Alert=&quot;&quot;,LastError=nil}
+ local dead=false
+ local press,age,scanAt,nextCatch= nil,0,0,0
+ local catchButton,catchSignal,marker
+ local connections={}
+ local function connect(event,fn) table.insert(connections,event:Connect(fn)) end
+ local function clearMarker() if marker then marker:Destroy();marker=nil end end
+ local function character(plr)
+  local char=plr.Character
+  local hum=char and char:FindFirstChildOfClass(&quot;Humanoid&quot;)
+  local root=char and char:FindFirstChild(&quot;HumanoidRootPart&quot;)
+  if char and char.Parent and hum and hum.Health&gt;0 and root then return char,hum,root end
+ end
+ local function visible(button)
+  if not button or not button.Parent then return false end
+  local node=button
+  while node do
+   if node:IsA(&quot;GuiObject&quot;) and not node.Visible or node:IsA(&quot;ScreenGui&quot;) and not node.Enabled then return false end
+   node=node.Parent
+  end
+  return true
+ end
+ local function activeHandlers(event)
+  if type(getconnections)~=&quot;function&quot; then return 0 end
+  local ok,handlers=pcall(getconnections,event)
+  if not ok then return 0 end
+  local count=0
+  for _,handler in ipairs(handlers) do if handler.Connected~=false and handler.Enabled~=false then count+=1 end end
+  return count
+ end
+ function M.Scan()
+  catchButton,catchSignal=nil,nil
+  local pg=player:FindFirstChild(&quot;PlayerGui&quot;);if not pg then return end
+  local inspected=0
+  for _,node in ipairs(pg:GetDescendants()) do
+   inspected+=1;if inspected&gt;4000 then break end
+   if node:IsA(&quot;GuiButton&quot;) and not node:IsDescendantOf(ctx.Gui) then
+    local name=node.Name:lower():gsub(&#x27;[%s_%-]&#x27;,&#x27;&#x27;)
+    local action=node:GetAttribute(&quot;Action&quot;)
+    if name==&quot;catch&quot; or name==&quot;catchbutton&quot; or name==&quot;catchball&quot; or action==&quot;Catch&quot; then
+     if visible(node) then
+      for _,event in ipairs({node.Activated,node.MouseButton1Click}) do
+       if activeHandlers(event)&gt;0 then catchButton,catchSignal=node,event;return end
+      end
+     end
+    end
+   end
+  end
+ end
+ function M.Hold(on,input)
+  if dead then return end
+  if on then
+   if not cfg.QBAim or M.Held then return end
+   press=input;M.Held=true
+  else
+   if input and press and input~=press and not(input.UserInputType==Enum.UserInputType.MouseButton2 and press.UserInputType==Enum.UserInputType.MouseButton2) then return end
+   press=nil;M.Held=false;M.Target=nil;clearMarker()
+  end
+ end
+ function M.Reset()
+  M.Hold(false);M.Target=nil;M.Alert=&quot;&quot;;M.AimStatus=&quot;Off&quot;;M.CatchStatus=&quot;Off&quot;;clearMarker()
+ end
+ local function eligible()
+  local char,hum,root=character(player)
+  local camera=workspace.CurrentCamera
+  if camera and camera.CameraType==Enum.CameraType.Scriptable then return end
+  if not char or root.Anchored or hum.PlatformStand or hum.Sit or char:GetAttribute(&quot;LOCKED_INPUTS&quot;)==true
+   or char:GetAttribute(&quot;cutsceneLock&quot;)==true or Input:GetFocusedTextBox() or not ctx.Focused() then return end
+  return char,hum,root
+ end
+ local function incoming(ball,root,limit)
+  if not ball or not ball.Parent then return false end
+  if ball:FindFirstAncestorOfClass(&quot;Tool&quot;) then return false end
+  local owner=ball:FindFirstAncestorOfClass(&quot;Model&quot;)
+  if owner and Players:GetPlayerFromCharacter(owner) then return false end
+  local delta=root.Position-ball.Position
+  if delta.Magnitude&gt;limit or delta.Magnitude&lt;.05 then return false end
+  local velocity=ball.AssemblyLinearVelocity-root.AssemblyLinearVelocity
+  return velocity.Magnitude&gt;2 and velocity.Unit:Dot(delta.Unit)&gt;.45
+ end
+ local function aim(cam,char,root,dt)
+  local best,bestRoot,bestChar,bestAngle
+  local cone=math.cos(math.rad(cfg.AimCone))
+  for _,plr in ipairs(Players:GetPlayers()) do
+   if plr~=player and not player.Neutral and not plr.Neutral and player.Team and plr.Team==player.Team then
+    local c,_,r=character(plr)
+    if r and (r.Position-root.Position).Magnitude&lt;=cfg.AimRange then
+     local delta=r.Position-cam.CFrame.Position
+     local score=delta.Magnitude&gt;.1 and cam.CFrame.LookVector:Dot(delta.Unit) or -1
+     local screen,onScreen=cam:WorldToViewportPoint(r.Position)
+     if score&gt;=cone and onScreen and screen.Z&gt;0 and (not bestAngle or score&gt;bestAngle) then
+      local params=RaycastParams.new();params.FilterType=Enum.RaycastFilterType.Exclude;params.FilterDescendantsInstances={char};params.IgnoreWater=true
+      local hit=workspace:Raycast(cam.CFrame.Position,delta,params)
+      if not hit or hit.Instance:IsDescendantOf(c) then best,bestRoot,bestChar,bestAngle=plr,r,c,score end
+     end
+    end
+   end
+  end
+  if best~=M.Target then clearMarker() end
+  M.Target=best
+  if not best then M.AimStatus=&quot;No confirmed teammate in aim cone&quot;;return end
+  local lead=bestRoot.AssemblyLinearVelocity*cfg.LeadTime
+  if lead.Magnitude&gt;12 then lead=lead.Unit*12 end
+  local point=bestRoot.Position+Vector3.new(0,1,0)+lead
+  if (point-cam.CFrame.Position).Magnitude&gt;.1 then
+   cam.CFrame=cam.CFrame:Lerp(CFrame.lookAt(cam.CFrame.Position,point),1-math.exp(-cfg.AimStrength*dt))
+  end
+  if cfg.ReceiverMarker and not marker then
+   marker=ctx.Create(&quot;BillboardGui&quot;,{Name=&quot;RiftUFReceiver&quot;,Adornee=bestChar:FindFirstChild(&quot;Head&quot;) or bestRoot,Size=UDim2.fromOffset(190,22),
+    StudsOffset=Vector3.new(0,3,0),AlwaysOnTop=true},ctx.Gui)
+   ctx.Create(&quot;TextLabel&quot;,{Size=UDim2.fromScale(1,1),BackgroundTransparency=1,Text=&quot;RECEIVER · @&quot;..best.Name,
+    Font=Enum.Font.GothamBold,TextSize=11,TextColor3=Color3.fromRGB(255,215,131),TextStrokeTransparency=.4},marker)
+  elseif not cfg.ReceiverMarker then clearMarker() end
+  M.AimStatus=&quot;Leading @&quot;..best.Name..&quot; · throw manually&quot;
+ end
+ function M.Step(dt)
+  if dead then return end
+  dt=math.clamp(tonumber(dt) or 0,0,.05);age+=dt
+  local char,_,root=eligible()
+  if not char then M.Hold(false);M.CatchStatus=&quot;Paused for character/input&quot;;M.Alert=&quot;&quot;;return end
+  local ball=ctx.Ball()
+  M.Alert=cfg.IncomingAlert and incoming(ball,root,45) and &quot;INCOMING FOOTBALL&quot; or &quot;&quot;
+  local cam=workspace.CurrentCamera
+  if cfg.QBAim and M.Held and cam and cam.CameraType~=Enum.CameraType.Scriptable and not cfg.FollowBall then aim(cam,char,root,dt)
+  else M.Target=nil;clearMarker();M.AimStatus=cfg.QBAim and &quot;Hold QB ASSIST or right mouse · aim near teammate&quot; or &quot;Off&quot; end
+  if not cfg.AutoCatch then M.CatchStatus=&quot;Off&quot;;return end
+  if age&gt;=scanAt then M.Scan();scanAt=age+1 end
+  if type(firesignal)~=&quot;function&quot; or not catchButton then M.CatchStatus=&quot;No supported catch control · copy diagnostics&quot;;return end
+  M.CatchStatus=&quot;Watching incoming football&quot;
+  if age&lt;nextCatch or not incoming(ball,root,cfg.CatchDistance) then return end
+  if char:GetAttribute(&quot;busy&quot;)==true or char:GetAttribute(&quot;canCatch&quot;)==false or char:GetAttribute(&quot;CanCatch&quot;)==false then return end
+  if not visible(catchButton) or catchButton:GetAttribute(&quot;OnCooldown&quot;)==true or (tonumber(catchButton:GetAttribute(&quot;CooldownRemaining&quot;)) or 0)&gt;0 then return end
+  local params=RaycastParams.new();params.FilterType=Enum.RaycastFilterType.Exclude;params.FilterDescendantsInstances={char};params.IgnoreWater=true
+  local hit=workspace:Raycast(root.Position,ball.Position-root.Position,params)
+  if hit and hit.Instance~=ball then M.CatchStatus=&quot;Football obstructed&quot;;return end
+  nextCatch=age+.4
+  local ok,err=pcall(firesignal,catchSignal)
+  if ok then M.CatchRequests+=1;M.CatchStatus=&quot;Catch input requested · server result unverified&quot;
+  else M.LastError=tostring(err);M.CatchStatus=&quot;Catch input failed&quot; end
+ end
+ function M.Diagnostics()
+  return table.concat({&quot;QB assist: &quot;..M.AimStatus,&quot;Catch: &quot;..M.CatchStatus..&quot; | requests=&quot;..M.CatchRequests,
+   &quot;Catch control: &quot;..(catchButton and catchButton.Parent and catchButton:GetFullName() or &quot;none&quot;),
+   &quot;Input support: firesignal=&quot;..tostring(type(firesignal)==&quot;function&quot;)..&quot;, getconnections=&quot;..tostring(type(getconnections)==&quot;function&quot;),
+   &quot;Assist error: &quot;..tostring(M.LastError),&quot;QB assist changes camera aim only; throw power/arc and catch acceptance remain game-controlled.&quot;},&quot;\n&quot;)
+ end
+ connect(Input.InputBegan,function(input,processed)
+  if not processed and input.UserInputType==Enum.UserInputType.MouseButton2 then M.Hold(true,input) end
+ end)
+ connect(Input.InputEnded,function(input) M.Hold(false,input) end)
+ connect(Input.WindowFocusReleased,function() M.Hold(false) end)
+ function M.Destroy()
+  if dead then return end
+  M.Reset();dead=true
+  for _,c in ipairs(connections) do c:Disconnect() end
+  table.clear(connections)
+ end
+ return M
+end
+
+end)()
 local Runtime=(function()
 -- Universe Football first release: replicated ball/player utilities and owned settings.
-return function(Kit,Brand,Interface)
+return function(Kit,Brand,Interface,Assists)
  local Players=game:GetService(&quot;Players&quot;)
  local Run=game:GetService(&quot;RunService&quot;)
  local Input=game:GetService(&quot;UserInputService&quot;)
  local player=Players.LocalPlayer
- local defaults={BallHighlight=false,BallName=false,FollowBall=false,FieldOfView=80,CustomFOV=false,
+ local defaults={QBAim=false,AutoCatch=false,IncomingAlert=false,ReceiverMarker=false,AimCone=6,AimRange=160,AimStrength=4,LeadTime=.18,CatchDistance=5,
+  BallHighlight=false,BallName=false,FollowBall=false,FieldOfView=80,CustomFOV=false,
   SpeedEnabled=false,WalkSpeed=24,PlayerESP=false,PlayerNames=false,ShowTeammates=true,FillTransparency=.65,ReduceMotion=false}
  local cfg=table.clone(defaults)
- local API={Game=&quot;Universe Football&quot;,Version=&quot;1.0&quot;,Config=cfg,Status=&quot;Starting&quot;,Alive=true,Candidates=0,Inspected=0,ScanCapped=false}
+ local API={Game=&quot;Universe Football&quot;,Version=&quot;1.1&quot;,Config=cfg,Status=&quot;Starting&quot;,Alive=true,Candidates=0,Inspected=0,ScanCapped=false}
  local connections,cleaners,candidates,rows={}, {}, {}, {}
  local focused=true
  local speedHum,speedBase,speedApplied,speedRequest,speedBlocked
@@ -452,10 +642,12 @@ return function(Kit,Brand,Interface)
   if not API.Alive or cfg[key]==nil or type(value)~=type(cfg[key]) then return false end
   if type(value)==&quot;number&quot; then
    if value~=value or math.abs(value)==math.huge then return false end
-   local bounds={WalkSpeed={16,60},FieldOfView={50,110},FillTransparency={0,1}}
+   local bounds={AimCone={3,12},AimRange={25,220},AimStrength={2,8},LeadTime={0,.4},CatchDistance={2,6},WalkSpeed={16,60},FieldOfView={50,110},FillTransparency={0,1}}
    value=math.clamp(value,bounds[key][1],bounds[key][2])
   end
   cfg[key]=value
+  if key==&quot;QBAim&quot; and not value and API.Assists then API.Assists.Hold(false) end
+  if key==&quot;FollowBall&quot; and value and API.Assists then API.Assists.Hold(false) end
   if key==&quot;SpeedEnabled&quot; then restoreSpeed();speedBlocked=nil end
   if key==&quot;CustomFOV&quot; then restoreFOV();fovBlocked=nil end
   if key==&quot;FollowBall&quot; then restoreFollow();followBlocked=nil end
@@ -463,6 +655,7 @@ return function(Kit,Brand,Interface)
   return true
  end
  function API.Reset()
+  if API.Assists then API.Assists.Reset() end
   restoreSpeed();restoreFOV();restoreFollow();clearRows();clearBallVisual()
   speedBlocked,fovBlocked,followBlocked=nil,nil,nil
   for k,v in pairs(defaults) do cfg[k]=v end
@@ -474,6 +667,7 @@ return function(Kit,Brand,Interface)
    &quot;Status: &quot;..API.Status,&quot;Ball: &quot;..(ball and ball.Parent and ball:GetFullName() or &quot;none&quot;),
    &quot;Candidates: &quot;..API.Candidates..&quot; | inspected: &quot;..API.Inspected..&quot; | scan capped: &quot;..tostring(API.ScanCapped),
    &quot;Speed: &quot;..tostring(hum() and hum().WalkSpeed)..&quot; | game override preserved: &quot;..tostring(speedBlocked~=nil),
+   API.Assists and API.Assists.Diagnostics() or &quot;Assists not initialized&quot;,
    &quot;Last error: &quot;..tostring(API.LastError),
    &quot;No remotes invoked. Ball discovery uses exact names/IsFootball; game-specific throw/catch wiring is not assumed.&quot;},&quot;\n&quot;)
  end
@@ -486,6 +680,7 @@ return function(Kit,Brand,Interface)
  function API.Unload()
   if not API.Alive then return end
   API.Reset();API.Alive=false
+  if API.Assists then API.Assists.Destroy() end
   if API.UI then API.UI.Destroy() end
   for _,clean in ipairs(cleaners) do pcall(clean) end
   for _,connection in ipairs(connections) do connection:Disconnect() end
@@ -505,6 +700,8 @@ return function(Kit,Brand,Interface)
   if not ok then API.LastError=tostring(err);API.Reset();API.Status=&quot;Paused after error · copy diagnostics&quot; end
  end
  local started,err=pcall(function()
+  API.Assists=Assists({Config=cfg,Gui=gui,Create=Kit.create,Ball=function() return API.Ball end,Focused=function() return focused end})
+  API.HoldQB=API.Assists.Hold
   API.UI=Interface({API=API,Config=cfg,Gui=gui,Brand=Brand,
    RegisterCleanup=function(fn) table.insert(cleaners,fn) end,
    Drag=function() end,Focus=function(on) focused=on end})
@@ -514,6 +711,10 @@ return function(Kit,Brand,Interface)
   connect(player.CharacterRemoving,function() restoreSpeed();speedBlocked=nil end)
   connect(gui.Destroying,API.Unload)
   connect(Run.Heartbeat,API.Step)
+  connect(Run.RenderStepped,function(dt)
+   local ok,err=pcall(API.Assists.Step,dt)
+   if not ok then API.Assists.LastError=tostring(err);API.Reset() end
+  end)
   API.Step(.15)
  end)
  if not started then API.Unload();error(&quot;Rift Universe Football startup: &quot;..tostring(err)) end
@@ -522,7 +723,7 @@ end
 
 end)()
 local brand=Brand(&quot;https://raw.githubusercontent.com/copperpoppercms-sys/rift-hub-universe-football/main/assets/rift_logo.jpg&quot;)
-local app=Runtime(Kit,brand,Interface)
+local app=Runtime(Kit,brand,Interface,Assists)
 app.OnUnload=function() if env.RiftUniverseFootball==app then env.RiftUniverseFootball=nil end end
 env.RiftUniverseFootball=app
 return app

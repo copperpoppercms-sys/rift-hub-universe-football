@@ -1,13 +1,14 @@
 -- Universe Football first release: replicated ball/player utilities and owned settings.
-return function(Kit,Brand,Interface)
+return function(Kit,Brand,Interface,Assists)
  local Players=game:GetService("Players")
  local Run=game:GetService("RunService")
  local Input=game:GetService("UserInputService")
  local player=Players.LocalPlayer
- local defaults={BallHighlight=false,BallName=false,FollowBall=false,FieldOfView=80,CustomFOV=false,
+ local defaults={QBAim=false,AutoCatch=false,IncomingAlert=false,ReceiverMarker=false,AimCone=6,AimRange=160,AimStrength=4,LeadTime=.18,CatchDistance=5,
+  BallHighlight=false,BallName=false,FollowBall=false,FieldOfView=80,CustomFOV=false,
   SpeedEnabled=false,WalkSpeed=24,PlayerESP=false,PlayerNames=false,ShowTeammates=true,FillTransparency=.65,ReduceMotion=false}
  local cfg=table.clone(defaults)
- local API={Game="Universe Football",Version="1.0",Config=cfg,Status="Starting",Alive=true,Candidates=0,Inspected=0,ScanCapped=false}
+ local API={Game="Universe Football",Version="1.1",Config=cfg,Status="Starting",Alive=true,Candidates=0,Inspected=0,ScanCapped=false}
  local connections,cleaners,candidates,rows={}, {}, {}, {}
  local focused=true
  local speedHum,speedBase,speedApplied,speedRequest,speedBlocked
@@ -160,10 +161,12 @@ return function(Kit,Brand,Interface)
   if not API.Alive or cfg[key]==nil or type(value)~=type(cfg[key]) then return false end
   if type(value)=="number" then
    if value~=value or math.abs(value)==math.huge then return false end
-   local bounds={WalkSpeed={16,60},FieldOfView={50,110},FillTransparency={0,1}}
+   local bounds={AimCone={3,12},AimRange={25,220},AimStrength={2,8},LeadTime={0,.4},CatchDistance={2,6},WalkSpeed={16,60},FieldOfView={50,110},FillTransparency={0,1}}
    value=math.clamp(value,bounds[key][1],bounds[key][2])
   end
   cfg[key]=value
+  if key=="QBAim" and not value and API.Assists then API.Assists.Hold(false) end
+  if key=="FollowBall" and value and API.Assists then API.Assists.Hold(false) end
   if key=="SpeedEnabled" then restoreSpeed();speedBlocked=nil end
   if key=="CustomFOV" then restoreFOV();fovBlocked=nil end
   if key=="FollowBall" then restoreFollow();followBlocked=nil end
@@ -171,6 +174,7 @@ return function(Kit,Brand,Interface)
   return true
  end
  function API.Reset()
+  if API.Assists then API.Assists.Reset() end
   restoreSpeed();restoreFOV();restoreFollow();clearRows();clearBallVisual()
   speedBlocked,fovBlocked,followBlocked=nil,nil,nil
   for k,v in pairs(defaults) do cfg[k]=v end
@@ -182,6 +186,7 @@ return function(Kit,Brand,Interface)
    "Status: "..API.Status,"Ball: "..(ball and ball.Parent and ball:GetFullName() or "none"),
    "Candidates: "..API.Candidates.." | inspected: "..API.Inspected.." | scan capped: "..tostring(API.ScanCapped),
    "Speed: "..tostring(hum() and hum().WalkSpeed).." | game override preserved: "..tostring(speedBlocked~=nil),
+   API.Assists and API.Assists.Diagnostics() or "Assists not initialized",
    "Last error: "..tostring(API.LastError),
    "No remotes invoked. Ball discovery uses exact names/IsFootball; game-specific throw/catch wiring is not assumed."},"\n")
  end
@@ -194,6 +199,7 @@ return function(Kit,Brand,Interface)
  function API.Unload()
   if not API.Alive then return end
   API.Reset();API.Alive=false
+  if API.Assists then API.Assists.Destroy() end
   if API.UI then API.UI.Destroy() end
   for _,clean in ipairs(cleaners) do pcall(clean) end
   for _,connection in ipairs(connections) do connection:Disconnect() end
@@ -213,6 +219,8 @@ return function(Kit,Brand,Interface)
   if not ok then API.LastError=tostring(err);API.Reset();API.Status="Paused after error · copy diagnostics" end
  end
  local started,err=pcall(function()
+  API.Assists=Assists({Config=cfg,Gui=gui,Create=Kit.create,Ball=function() return API.Ball end,Focused=function() return focused end})
+  API.HoldQB=API.Assists.Hold
   API.UI=Interface({API=API,Config=cfg,Gui=gui,Brand=Brand,
    RegisterCleanup=function(fn) table.insert(cleaners,fn) end,
    Drag=function() end,Focus=function(on) focused=on end})
@@ -222,6 +230,10 @@ return function(Kit,Brand,Interface)
   connect(player.CharacterRemoving,function() restoreSpeed();speedBlocked=nil end)
   connect(gui.Destroying,API.Unload)
   connect(Run.Heartbeat,API.Step)
+  connect(Run.RenderStepped,function(dt)
+   local ok,err=pcall(API.Assists.Step,dt)
+   if not ok then API.Assists.LastError=tostring(err);API.Reset() end
+  end)
   API.Step(.15)
  end)
  if not started then API.Unload();error("Rift Universe Football startup: "..tostring(err)) end

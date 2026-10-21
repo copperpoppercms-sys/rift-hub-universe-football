@@ -281,7 +281,7 @@ local function findName(root,name)
  for _,child in ipairs(root:GetChildren()) do local got=findName(child,name);if got then return got end end
 end
 local api=boot()
-check(api.Game=='Universe Football' and api.Version=='1.0' and api.Gui.Parent,'standalone did not open')
+check(api.Game=='Universe Football' and api.Version=='1.1' and api.Gui.Parent,'standalone did not open')
 check(not api.Config.PlayerESP and not api.Config.BallHighlight and not api.Config.SpeedEnabled and not api.Config.FollowBall,'features start enabled')
 check(api.Status:find('No football',1,true),'missing football falsely reported')
 check(findName(api.Gui,'Tab_football') and findName(api.Gui,'Tab_movement'),'football/movement pages missing')
@@ -327,6 +327,56 @@ api.SetOption('SpeedEnabled',true);api.Step(.2);input.WindowFocusReleased:Fire()
 input.WindowFocused:Fire();api.Step(.2)
 local report,copied=api.CopyDiagnostics();check(copied and clipboard==report and report:find('Universe Football',1,true),'diagnostics copy failed')
 api.Reset();check(not api.Config.SpeedEnabled and not api.Config.PlayerESP and h.WalkSpeed==19,'reset did not restore/disable features')
+
+-- QB assist: held input, team/angle/visibility gates and bounded camera response.
+check(not api.Config.QBAim and not api.Config.AutoCatch,'assists must start off')
+local mateRoot=other.Character.PrimaryPart;mateRoot.Position=Vector3.new(0,0,-35);mateRoot.AssemblyLinearVelocity=Vector3.new(5,0,0)
+other.Team=ownTeam;other.Neutral=false;camera.CFrame=cameraFrame;cameraFrame.LookVector=Vector3.new(0,0,-1)
+local touch={UserInputType=Enum.UserInputType.Touch}
+findName(api.Gui,'HoldQB').InputBegan:Fire(touch);api.Assists.Step(.05)
+check(not api.Assists.Held and not api.Assists.Target,'disabled QB assist reacted')
+api.SetOption('QBAim',true);findName(api.Gui,'HoldQB').InputBegan:Fire(touch)
+api.Assists.Step(.05)
+check(api.Assists.Target==other and lookCalls>0 and lastAlpha<.25,'held teammate assist did not apply gentle camera response')
+check(lastLook.X>mateRoot.Position.X,'receiver velocity lead missing')
+local unrelated={UserInputType=Enum.UserInputType.Touch};input.InputEnded:Fire(unrelated)
+check(api.Assists.Held,'another touch released QB assist')
+input.InputEnded:Fire(touch);check(not api.Assists.Held and not api.Assists.Target,'held aim failed to release')
+api.HoldQB(true,touch);other.Team=enemyTeam;api.Assists.Step(.05);check(not api.Assists.Target,'QB assist targeted opponent')
+other.Team=ownTeam;mateRoot.Position=Vector3.new(25,0,-10);api.Assists.Step(.05);check(not api.Assists.Target,'QB assist snapped outside cone')
+mateRoot.Position=Vector3.new(0,0,-35);wall=true;api.Assists.Step(.05);check(not api.Assists.Target,'QB assist ignored wall');wall=false
+api.Assists.Step(.05);check(api.Assists.Target==other,'visible teammate did not recover')
+api.SetOption('FollowBall',true);check(not api.Assists.Held,'ball follow and held aiming conflicted');api.SetOption('FollowBall',false)
+-- Native catch: one eligible event, cooldowns, incoming direction, walls and game gates.
+local hud=node('ScreenGui','MobileFootballHUD',localPlayer:FindFirstChild('PlayerGui'))
+local catch=node('TextButton','CatchButton',hud);local caught=0
+catch.Activated:Connect(function() caught+=1 end)
+generic.Position=Vector3.new(0,0,-4);generic.AssemblyLinearVelocity=Vector3.new(0,0,15)
+localPlayer.Character.PrimaryPart.AssemblyLinearVelocity=Vector3.new()
+api.SetOption('AutoCatch',true);api.SetOption('IncomingAlert',true);api.SetOption('CatchDistance',5)
+api.Assists.Scan();api.Assists.Step(.05)
+check(caught==1 and api.Assists.CatchRequests==1,'incoming ball did not request actual catch signal')
+check(api.Assists.Alert=='INCOMING FOOTBALL','incoming alert missing')
+api.Assists.Step(.05);check(caught==1,'catch request cooldown ignored')
+for i=1,9 do api.Assists.Step(.05) end
+check(caught==2,'catch cooldown did not recover')
+catch:SetAttribute('OnCooldown',true);for i=1,12 do api.Assists.Step(.05) end;check(caught==2,'native catch cooldown bypassed')
+catch:SetAttribute('OnCooldown',false);localPlayer.Character:SetAttribute('canCatch',false)
+for i=1,12 do api.Assists.Step(.05) end;check(caught==2,'game canCatch lock ignored')
+localPlayer.Character:SetAttribute('canCatch',nil);generic.AssemblyLinearVelocity=Vector3.new(0,0,-15)
+for i=1,12 do api.Assists.Step(.05) end;check(caught==2,'outgoing ball triggered catch')
+generic.AssemblyLinearVelocity=Vector3.new(0,0,15);generic.Position=Vector3.new(0,0,-30)
+for i=1,12 do api.Assists.Step(.05) end;check(caught==2,'out-of-range ball triggered catch')
+generic.Position=Vector3.new(0,0,-4);wall=true
+for i=1,12 do api.Assists.Step(.05) end;check(caught==2,'catch requested through wall');wall=false
+local tool=node('Tool','Football',other.Character);generic.Parent=tool
+for i=1,12 do api.Assists.Step(.05) end;check(caught==2,'held ball triggered auto catch')
+generic.Parent=workspace;catch.Visible=false
+for i=1,12 do api.Assists.Step(.05) end;check(caught==2,'hidden catch button used')
+catch.Visible=true;api.Assists.Scan();local originalSignal=firesignal;firesignal=nil
+api.Assists.Step(.05);check(api.Assists.CatchStatus:find('No supported',1,true),'missing executor support was hidden');firesignal=originalSignal
+api.SetOption('CatchDistance',100);check(api.Config.CatchDistance==6,'catch request distance exceeded bound')
+api.SetOption('AutoCatch',false);hud:Destroy()
 local old=api;api=boot();flushSpawn();flush();check(not old.Alive and old.Gui==nil,'reexecution left old UI running')
 api.Unload();api.Unload();flushSpawn();flush();check(not env.RiftUniverseFootball and not api.Gui,'unload left global/window')
 local leaks=0
