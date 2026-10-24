@@ -2,7 +2,7 @@ from pathlib import Path
 import html
 r=Path(__file__).parent
 s='''-- RiftHub-Entry: universe-football
--- Rift Hub / Universe Football / 1.1
+-- Rift Hub / Universe Football / 1.2
 local env=type(getgenv)=="function" and getgenv() or _G
 local prior=env.RiftUniverseFootball
 if type(prior)=="table" and type(prior.Unload)=="function" then pcall(prior.Unload) end

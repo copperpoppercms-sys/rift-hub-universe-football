@@ -37,18 +37,40 @@ return function(ctx)
  function M.Scan()
   catchButton,catchSignal=nil,nil
   local pg=player:FindFirstChild("PlayerGui");if not pg then return end
-  local inspected=0
-  for _,node in ipairs(pg:GetDescendants()) do
-   inspected+=1;if inspected>4000 then break end
-   if node:IsA("GuiButton") and not node:IsDescendantOf(ctx.Gui) then
-    local name=node.Name:lower():gsub('[%s_%-]','')
-    local action=node:GetAttribute("Action")
-    if name=="catch" or name=="catchbutton" or name=="catchball" or action=="Catch" then
-     if visible(node) then
+  local queue=pg:GetChildren();local index,inspected=1,0
+  local skip={mainmenu=true,mainmenuscreen=true,graphics=true,loading=true,viewportframe=true}
+  while index<=#queue and inspected<6000 do
+   local node=queue[index];index+=1;inspected+=1
+   local name=node.Name:lower():gsub('[%s_%-]','')
+   if not skip[name] and not node:IsDescendantOf(ctx.Gui) and visible(node) then
+    if node:IsA("GuiButton") then
+     local action=tostring(node:GetAttribute("Action") or ""):lower():gsub('[%s_%-]','')
+     local text=node:IsA("TextButton") and node.Text:lower():gsub('<[^>]+>',''):gsub('[%s_%-]','') or ""
+     local match=name=="catch" or name=="catchbutton" or name=="catchball" or action=="catch" or text=="catch" or text=="catchball"
+     if not match then
+      local labels=node:GetDescendants()
+      for i,child in ipairs(labels) do
+       if i>64 then break end
+       if child:IsA("TextLabel") and visible(child) and child.Text:lower():gsub('[%s_%-]','')=="catch" then match=true;break end
+      end
+     end
+     if match then
       for _,event in ipairs({node.Activated,node.MouseButton1Click}) do
        if activeHandlers(event)>0 then catchButton,catchSignal=node,event;return end
       end
      end
+    end
+    for _,child in ipairs(node:GetChildren()) do table.insert(queue,child) end
+   end
+  end
+ end
+ local function teamKey(plr)
+  if plr.Team and not plr.Neutral then return plr.Team end
+  for _,node in ipairs({plr,plr.Character or false}) do
+   if node then
+    for _,key in ipairs({"TeamId","TeamName","Team","Side"}) do
+     local value=node:GetAttribute(key)
+     if (type(value)=="string" and value~="" and value:lower()~="neutral") or type(value)=="number" then return key..":"..tostring(value) end
     end
    end
   end
@@ -87,8 +109,9 @@ return function(ctx)
  local function aim(cam,char,root,dt)
   local best,bestRoot,bestChar,bestAngle
   local cone=math.cos(math.rad(cfg.AimCone))
+  local ownTeam=teamKey(player)
   for _,plr in ipairs(Players:GetPlayers()) do
-   if plr~=player and not player.Neutral and not plr.Neutral and player.Team and plr.Team==player.Team then
+   if plr~=player and ownTeam~=nil and teamKey(plr)==ownTeam then
     local c,_,r=character(plr)
     if r and (r.Position-root.Position).Magnitude<=cfg.AimRange then
      local delta=r.Position-cam.CFrame.Position
@@ -131,7 +154,7 @@ return function(ctx)
   else M.Target=nil;clearMarker();M.AimStatus=cfg.QBAim and "Hold QB ASSIST or right mouse · aim near teammate" or "Off" end
   if not cfg.AutoCatch then M.CatchStatus="Off";return end
   if age>=scanAt then M.Scan();scanAt=age+1 end
-  if type(firesignal)~="function" or not catchButton then M.CatchStatus="No supported catch control · copy diagnostics";return end
+  if type(firesignal)~="function" or not catchButton then M.CatchStatus="Waiting for a supported live catch button";return end
   M.CatchStatus="Watching incoming football"
   if age<nextCatch or not incoming(ball,root,cfg.CatchDistance) then return end
   if char:GetAttribute("busy")==true or char:GetAttribute("canCatch")==false or char:GetAttribute("CanCatch")==false then return end

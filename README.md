@@ -1,4 +1,4 @@
-# Rift Hub · Universe Football · 1.1
+# Rift Hub · Universe Football · 1.2
 
 Standalone first release, with the centered Rift logo and **N0VA_0100** credits. Animated, phone-friendly UI with Football, Movement, Visuals and Settings pages.
 
@@ -8,12 +8,12 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/copperpoppercms-sys/r
 
 ## QB and catch assistance
 
-- **QB assist** softly leads a confirmed teammate near the camera aim while you hold **HOLD QB ASSIST** on phone or right mouse on desktop. Adjust the cone (3–12 degrees), response, receiver range and a short velocity lead. It stops when the held finger/button releases, typing starts, focus is lost or the game locks input. Opponents, obscured players and scripted cameras are excluded. Ball-follow camera and held aiming cannot run together.
+- **QB assist** softly leads a confirmed teammate near the camera aim while you hold **HOLD QB ASSIST** on phone or right mouse on desktop. Adjust the cone (3–12 degrees), response, receiver range and a short velocity lead. It stops when the held finger/button releases, typing starts, focus is lost or the game locks input. Opponents, obscured players and scripted cameras are excluded. If Roblox Teams are unavailable, matching replicated TeamId/TeamName/Team/Side fields can establish teammate identity; unknown teams are not guessed. Ball-follow camera and held aiming cannot run together.
 - **Auto catch input** requests a visible native catch button only when a loose, incoming football is within the chosen 2–6 stud request distance. It checks line of sight, game catch/busy flags and exposed cooldowns, with at least 0.4 seconds between requests. It does not extend reach or guarantee a catch.
 - **Incoming football alert** shows a quiet text cue for an approaching ball within 45 studs.
 - **Receiver marker** optionally labels the selected teammate while aiming.
 
-QB assistance changes **camera aim only**. Throwing remains manual; the script does not know or rewrite the game's launch power/arc, so this is not a guaranteed pass solver. Catch assistance requires executor `firesignal` and `getconnections` support plus a visible button named Catch/CatchButton/CatchBall or carrying `Action="Catch"`. It checks for actual connected handlers before making requests. When unavailable, it says **No supported catch control** and includes the limitation in diagnostics. No guessed catch remote or key is fired.
+QB assistance changes **camera aim only**. Throwing remains manual; the script does not know or rewrite the game's launch power/arc, so this is not a guaranteed pass solver. Catch assistance requires executor `firesignal` and `getconnections` support plus a visible button named Catch/CatchButton/CatchBall, carrying `Action="Catch"`, or displaying an exact Catch label (including nested mobile labels). Menu/loading branches are excluded; buttons are rescanned automatically. It checks for actual connected handlers before making requests. When unavailable, it says **No supported catch control** and includes the limitation in diagnostics. No guessed catch remote or key is fired.
 
 All assists start off. There is no promise that assistance will go unnoticed, avoid reports or comply with a game's rules. No anti-cheat evasion is implemented.
 
@@ -32,9 +32,9 @@ All optional features start **off**.
 
 ## Football discovery
 
-Looks for replicated BaseParts named `Football` or `MatchBall`, parts with the `IsFootball` attribute, or Handle/Ball/MeshPart children of a matching Football/MatchBall Model or Tool. It does not assume every part called Ball is a football. The initial scan is capped at 20,000 descendants and 128 candidate parts. New descendants are considered as they arrive; use **Rescan football** after a play starts if needed.
+Looks for replicated BaseParts named `Football` or `MatchBall`, parts with the `IsFootball` attribute, or Handle/Ball/MeshPart children of a matching Football/MatchBall Model or Tool. It does not assume every part called Ball is a football. World discovery runs breadth-first in batches of 1,200 nodes and prunes MainMenu, MainMenuScreen, LockerRoom, Graphics, Loading and ViewportFrame branches. It continues across batches instead of stopping permanently after 20,000 menu descendants. It tracks up to 128 candidates, watches new descendants and automatically retries every few seconds while no football is found, including late-renamed objects. Anchored decorative balls are rejected unless explicitly marked IsFootball. Moving candidates receive priority.
 
-If multiple matching balls exist, the nearest is chosen and the status reports that choice. If none match, it says **No football found**. Copy diagnostics provides PlaceId, GameId, detected part path, candidate/scan counts and setting status, allowing later game-specific work to use observed data.
+If multiple matching balls exist, distance and observed motion determine the choice and the status reports multiple candidates. If none match, it says **No football found**. Copy diagnostics provides PlaceId, GameId, detected part path, candidate/scan counts and setting status, allowing later game-specific work to use observed data.
 
 This version contains no guessed throw/catch remotes, automatic tackles, server damage or anti-cheat bypass. It does not promise catch range, altered throw power or cooldown removal. Native catch control compatibility with live Universe Football has not been verified. Highlights and labels are client-side; speed is a character setting that the game may replace. Live Universe Football testing remains necessary.
 
@@ -58,3 +58,7 @@ python tests/run_checks.py
 ```
 
 Set `LUAU_BIN` and `LUAU_COMPILE_BIN` if needed. Simulated checks cover actual standalone startup, exact football matching, new/removed/multiple balls, carrier labels, team visuals, setting bounds, game overrides, focus loss, held aiming, target selection, native catch input, cooldown/obstruction checks, reset, re-execution and listener cleanup. Every Luau source is compiled; the editable page is checked against the executable and its JavaScript syntax is validated. These checks do not reproduce Roblox rendering or prove live game/server behavior.
+
+## Live compatibility
+
+The supplied report identifies Universe Football at place `2338325648`, universe `184199275`, and exposed a menu-heavy scan cutoff. This release fixes that observed discovery failure; actual live throwing/catching remains unverified. Camera lead is not a throw-power solver, and no catch request is counted as a confirmed reception. No additional manual report is required to use the automatic detection.

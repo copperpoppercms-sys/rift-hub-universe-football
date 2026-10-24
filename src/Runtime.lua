@@ -8,9 +8,19 @@ return function(Kit,Brand,Interface,Assists)
   BallHighlight=false,BallName=false,FollowBall=false,FieldOfView=80,CustomFOV=false,
   SpeedEnabled=false,WalkSpeed=24,PlayerESP=false,PlayerNames=false,ShowTeammates=true,FillTransparency=.65,ReduceMotion=false}
  local cfg=table.clone(defaults)
- local API={Game="Universe Football",Version="1.1",Config=cfg,Status="Starting",Alive=true,Candidates=0,Inspected=0,ScanCapped=false}
+ local API={Game="Universe Football",Version="1.2",Config=cfg,Status="Starting",Alive=true,Candidates=0,Inspected=0,ScanCapped=false}
  local connections,cleaners,candidates,rows={}, {}, {}, {}
  local focused=true
+ local scanQueue,scanIndex,missingAge={},1,0
+ local ignored={mainmenu=true,mainmenuscreen=true,lockerroom=true,graphics=true,loading=true,viewportframe=true}
+ local function excluded(node)
+  local current=node
+  while current and current~=workspace do
+   if ignored[current.Name:lower():gsub("[%s_%-]","")] then return true end
+   current=current.Parent
+  end
+  return false
+ end
  local speedHum,speedBase,speedApplied,speedRequest,speedBlocked
  local fovCam,fovBase,fovApplied,fovRequest,fovBlocked
  local followCam,followBase,followApplied,followBlocked
@@ -56,7 +66,8 @@ return function(Kit,Brand,Interface,Assists)
   return name=="football" or name=="matchball" or node:GetAttribute("IsFootball")==true
  end
  local function ballPart(node)
-  if not node:IsA("BasePart") then return false end
+  if not node:IsA("BasePart") or excluded(node) then return false end
+  if node.Anchored and node:GetAttribute("IsFootball")~=true then return false end
   if named(node) then return true end
   if node.Name~="Handle" and node.Name~="Ball" and node.Name~="MeshPart" then return false end
   local p=node.Parent
@@ -73,31 +84,39 @@ return function(Kit,Brand,Interface,Assists)
  end
  function API.Rescan()
   table.clear(candidates);API.Candidates=0;API.Inspected=0;API.ScanCapped=false
-  for _,node in ipairs(workspace:GetDescendants()) do
-   API.Inspected+=1
-   if API.Inspected>20000 then API.ScanCapped=true;break end
-   addCandidate(node)
+  scanQueue=workspace:GetChildren();scanIndex=1;API.Scanning=true
+ end
+ local function scanBatch()
+  local budget=1200
+  while budget>0 and scanIndex<=#scanQueue do
+   local node=scanQueue[scanIndex];scanIndex+=1;budget-=1;API.Inspected+=1
+   if node.Parent and not excluded(node) then
+    addCandidate(node)
+    for _,child in ipairs(node:GetChildren()) do table.insert(scanQueue,child) end
+   end
   end
+  if scanIndex>#scanQueue then scanQueue={};scanIndex=1;API.Scanning=false end
  end
  local function chooseBall()
   local own=player.Character;local root=own and own:FindFirstChild("HumanoidRootPart")
-  local best,distance=nil,math.huge
+  local best,distance,bestScore=nil,math.huge,math.huge
   for part in pairs(candidates) do
    if not part.Parent or not part:IsDescendantOf(workspace) then candidates[part]=nil;API.Candidates-=1
    else
     local d=root and (part.Position-root.Position).Magnitude or 0
-    if not best or d<distance then best,distance=part,d end
+    local score=d-(part.AssemblyLinearVelocity.Magnitude>3 and 35 or 0)
+    if not best or score<bestScore then best,distance,bestScore=part,d,score end
    end
   end
   return best,distance
  end
  local function updateBall(ball,distance)
   if ball~=ballVisual then clearBallVisual();ballVisual=ball end
-  if not ball then API.Status="No football found · use Rescan after a play starts";return end
+  if not ball then API.Status=API.Scanning and "Scanning live world · menu scenery excluded" or "No football found · watching for the next play";return end
   local held=ball:FindFirstAncestorOfClass("Model")
   local carrier=held and Players:GetPlayerFromCharacter(held)
   API.Status=(carrier and "Carrier: @"..carrier.Name or "Football: "..ball.Name)..string.format(" · %.0f studs · %.0f studs/s",distance,ball.AssemblyLinearVelocity.Magnitude)
-  if API.Candidates>1 then API.Status..=" · nearest of "..API.Candidates end
+  if API.Candidates>1 then API.Status..=" · live priority / "..API.Candidates.." candidates" end
   if cfg.BallHighlight and not ballHighlight then
    ballHighlight=Kit.create("Highlight",{Name="RiftFootballHighlight",Adornee=ball,DepthMode=Enum.HighlightDepthMode.AlwaysOnTop,
     FillColor=Color3.fromRGB(255,178,72),OutlineColor=Color3.fromRGB(255,225,168),FillTransparency=.55},ball)
@@ -184,7 +203,7 @@ return function(Kit,Brand,Interface,Assists)
   local ball=API.Ball
   return table.concat({"Rift Hub / Universe Football / "..API.Version,"PlaceId: "..game.PlaceId.." | GameId: "..game.GameId,
    "Status: "..API.Status,"Ball: "..(ball and ball.Parent and ball:GetFullName() or "none"),
-   "Candidates: "..API.Candidates.." | inspected: "..API.Inspected.." | scan capped: "..tostring(API.ScanCapped),
+   "Candidates: "..API.Candidates.." | inspected: "..API.Inspected.." | scanning: "..tostring(API.Scanning),
    "Speed: "..tostring(hum() and hum().WalkSpeed).." | game override preserved: "..tostring(speedBlocked~=nil),
    API.Assists and API.Assists.Diagnostics() or "Assists not initialized",
    "Last error: "..tostring(API.LastError),
@@ -212,6 +231,11 @@ return function(Kit,Brand,Interface,Assists)
   age+=math.clamp(tonumber(dt) or 0,0,.2)
   if age<.15 then return end;age=0
   local ok,err=pcall(function()
+   if not API.Scanning and API.Candidates==0 then
+    missingAge+=.15
+    if missingAge>=3 then API.Rescan();missingAge=0 end
+   else missingAge=0 end
+   if API.Scanning then scanBatch() end
    local ball,distance=chooseBall();API.Ball=ball
    updateBall(ball,distance);updatePlayers();settings(ball)
    if API.UI then API.UI.Step() end

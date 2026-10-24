@@ -281,10 +281,25 @@ local function findName(root,name)
  for _,child in ipairs(root:GetChildren()) do local got=findName(child,name);if got then return got end end
 end
 local api=boot()
-check(api.Game=='Universe Football' and api.Version=='1.1' and api.Gui.Parent,'standalone did not open')
+check(api.Game=='Universe Football' and api.Version=='1.2' and api.Gui.Parent,'standalone did not open')
 check(not api.Config.PlayerESP and not api.Config.BallHighlight and not api.Config.SpeedEnabled and not api.Config.FollowBall,'features start enabled')
 check(api.Status:find('No football',1,true),'missing football falsely reported')
 check(findName(api.Gui,'Tab_football') and findName(api.Gui,'Tab_movement'),'football/movement pages missing')
+
+-- Menu scenery is pruned, batches continue, and late-renamed balls are rediscovered automatically.
+local menu=node('Model','MainMenu',workspace);local decorative=node('Part','Football',menu)
+decorative.Position=Vector3.new();api.Rescan();api.Step(.2)
+check(api.Candidates==0 and not api.Ball,'locker/menu football mistaken for live ball')
+local wide=node('Folder','WideMap',workspace)
+for i=1,1250 do node('Folder','Scenery'..i,wide) end
+api.Rescan();api.Step(.2);check(api.Scanning,'scan did not yield its batch budget')
+for i=1,4 do api.Step(.2) end
+check(not api.Scanning and api.Inspected>1200 and not api.ScanCapped,'world scan did not finish across batches')
+local delayed=node('Part','StagingObject',workspace);delayed.Position=Vector3.new(5,0,0)
+workspace.DescendantAdded:Fire(delayed);delayed.Name='Football'
+for i=1,30 do api.Step(.2) end
+check(api.Ball==delayed,'automatic retry missed a ball renamed after insertion')
+delayed:Destroy();api.Step(.2);wide:Destroy();menu:Destroy()
 local ball=node('Part','Football',workspace);ball.Position=Vector3.new(10,5,0);ball.AssemblyLinearVelocity=Vector3.new(30,0,0)
 api.Rescan();api.Step(.2)
 check(api.Ball==ball and api.Candidates==1 and api.Status:find('30 studs/s',1,true),'ball discovery/live speed missing')
@@ -318,6 +333,7 @@ local tag=findName(api.Gui,'RiftUFUsername');check(tag and tag.Enabled,'username
 other.Team=ownTeam;api.SetOption('ShowTeammates',false);api.Step(.2);check(not other.Character:FindFirstChild('RiftUFPlayer'),'teammate filter ignored')
 api.SetOption('ShowTeammates',true);api.Step(.2);check(other.Character:FindFirstChild('RiftUFPlayer'),'teammate filter did not recover')
 ball.Parent=localPlayer.Character;api.Step(.2);check(api.Status:find('@Owner',1,true),'carrier not identified from character')
+ball.AssemblyLinearVelocity=Vector3.new()
 local nearer=node('Part','MatchBall',workspace);nearer.Position=Vector3.new(1,0,0);workspace.DescendantAdded:Fire(nearer);api.Step(.2)
 check(api.Ball==nearer and api.Candidates==2,'new/multiple balls not tracked')
 nearer:Destroy();ball:Destroy();api.Step(.2);check(not api.Ball and api.Candidates==0,'removed football remained selected')
@@ -347,6 +363,13 @@ other.Team=ownTeam;mateRoot.Position=Vector3.new(25,0,-10);api.Assists.Step(.05)
 mateRoot.Position=Vector3.new(0,0,-35);wall=true;api.Assists.Step(.05);check(not api.Assists.Target,'QB assist ignored wall');wall=false
 api.Assists.Step(.05);check(api.Assists.Target==other,'visible teammate did not recover')
 api.SetOption('FollowBall',true);check(not api.Assists.Held,'ball follow and held aiming conflicted');api.SetOption('FollowBall',false)
+
+localPlayer.Team=nil;other.Team=nil;localPlayer.Neutral=true;other.Neutral=true
+localPlayer:SetAttribute('TeamId',7);other:SetAttribute('TeamId',7)
+api.HoldQB(true,touch);api.Assists.Step(.05)
+check(api.Assists.Target==other,'replicated TeamId fallback was not used')
+api.HoldQB(false);localPlayer:SetAttribute('TeamId',nil);other:SetAttribute('TeamId',nil)
+localPlayer.Team=ownTeam;other.Team=ownTeam;localPlayer.Neutral=false;other.Neutral=false
 -- Native catch: one eligible event, cooldowns, incoming direction, walls and game gates.
 local hud=node('ScreenGui','MobileFootballHUD',localPlayer:FindFirstChild('PlayerGui'))
 local catch=node('TextButton','CatchButton',hud);local caught=0
@@ -374,9 +397,17 @@ for i=1,12 do api.Assists.Step(.05) end;check(caught==2,'held ball triggered aut
 generic.Parent=workspace;catch.Visible=false
 for i=1,12 do api.Assists.Step(.05) end;check(caught==2,'hidden catch button used')
 catch.Visible=true;api.Assists.Scan();local originalSignal=firesignal;firesignal=nil
-api.Assists.Step(.05);check(api.Assists.CatchStatus:find('No supported',1,true),'missing executor support was hidden');firesignal=originalSignal
+api.Assists.Step(.05);check(api.Assists.CatchStatus:find('Waiting for',1,true),'missing executor support was hidden');firesignal=originalSignal
 api.SetOption('CatchDistance',100);check(api.Config.CatchDistance==6,'catch request distance exceeded bound')
 api.SetOption('AutoCatch',false);hud:Destroy()
+local nestedHUD=node('ScreenGui','MobileActions',localPlayer:FindFirstChild('PlayerGui'))
+local nestedButton=node('TextButton','ActionSlot3',nestedHUD)
+local holder=node('Frame','Visual',nestedButton);node('TextLabel','Title',holder).Text='Catch'
+local nestedRequests=0;nestedButton.Activated:Connect(function() nestedRequests+=1 end)
+api.SetOption('AutoCatch',true);api.Assists.Scan();api.Assists.Step(.05)
+check(nestedRequests==1,'nested catch label did not resolve native button')
+api.SetOption('AutoCatch',false);nestedHUD:Destroy()
+
 local old=api;api=boot();flushSpawn();flush();check(not old.Alive and old.Gui==nil,'reexecution left old UI running')
 api.Unload();api.Unload();flushSpawn();flush();check(not env.RiftUniverseFootball and not api.Gui,'unload left global/window')
 local leaks=0

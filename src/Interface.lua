@@ -57,7 +57,7 @@ return function(ctx)
     local close=headerButton("Close","×",-43);local minimize=headerButton("Minimize","−",-78)
     local side=make("Frame",{Name="Sidebar",Position=UDim2.fromOffset(0,64),Size=UDim2.new(0,136,1,-64),BackgroundColor3=C.Panel,BorderSizePixel=0},surface)
     local content=make("Frame",{Position=UDim2.fromOffset(136,64),Size=UDim2.new(1,-136,1,-91),BackgroundTransparency=1,ClipsDescendants=true},surface)
-    local footer=text(surface,"N0VA_0100  /  RIFT UF 1.1",9,C.Sub,UDim2.new(0,151,1,-23),UDim2.new(1,-166,0,18))
+    local footer=text(surface,"N0VA_0100  /  RIFT UF 1.2",9,C.Sub,UDim2.new(0,151,1,-23),UDim2.new(1,-166,0,18))
     local marker=make("Frame",{Position=UDim2.fromOffset(0,24),Size=UDim2.fromOffset(3,22),BackgroundColor3=C.Accent,BorderSizePixel=0},side);round(marker,2)
     local pages,tabs,selected={},{},"football"
     local function select(id)
@@ -151,7 +151,7 @@ return function(ctx)
     slider(catching,"CatchDistance","Request distance (studs)",2,6)
     toggle(catching,"IncomingAlert","Incoming football alert")
     local catchStatus=text(catching,"Off",10,C.Sub,nil,UDim2.new(1,0,0,38));catchStatus.TextWrapped=true
-    local ball=section(M.football,"LIVE FOOTBALL","Tracks a replicated Football or MatchBall. If no matching object is present, the status says so rather than guessing a remote.")
+    local ball=section(M.football,"LIVE FOOTBALL","Automatically scans the live world in batches, skips menu/locker-room scenery and watches for new footballs.")
     toggle(ball,"BallHighlight","Highlight football")
     toggle(ball,"BallName","Football label")
     local ballStatus=text(ball,"Looking for football",11,C.Sub,nil,UDim2.new(1,0,0,42));ballStatus.TextWrapped=true
