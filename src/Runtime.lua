@@ -1,14 +1,14 @@
 -- Universe Football first release: replicated ball/player utilities and owned settings.
-return function(Kit,Brand,Interface,Assists,Movement)
+return function(Kit,Brand,Interface,Assists,Movement,Planner,PassMath)
  local Players=game:GetService("Players")
  local Run=game:GetService("RunService")
  local Input=game:GetService("UserInputService")
  local player=Players.LocalPlayer
- local defaults={TouchCatch=false,AutoJump=false,JumpBoost=false,JumpPower=60,JumpHeight=9,InfiniteJump=false,Noclip=false,QBAim=false,AutoCatch=false,IncomingAlert=false,ReceiverMarker=false,AimCone=6,AimRange=160,AimStrength=4,LeadTime=.18,CatchDistance=5,
+ local defaults={BallisticAim=false,AutoThrow=false,ManualPassModel=false,PassSpeed=110,PassGravity=28,AutoMag=false,TouchCatch=false,AutoJump=false,JumpBoost=false,JumpPower=60,JumpHeight=9,InfiniteJump=false,Noclip=false,QBAim=false,AutoCatch=false,IncomingAlert=false,ReceiverMarker=false,AimCone=6,AimRange=160,AimStrength=4,LeadTime=.18,CatchDistance=5,
   BallHighlight=false,BallName=false,FollowBall=false,FieldOfView=80,CustomFOV=false,
   SpeedEnabled=false,WalkSpeed=24,PlayerESP=false,PlayerNames=false,ShowTeammates=true,FillTransparency=.65,ReduceMotion=false}
  local cfg=table.clone(defaults)
- local API={Game="Universe Football",Version="1.3",Config=cfg,Status="Starting",Alive=true,Candidates=0,Inspected=0,ScanCapped=false}
+ local API={Game="Universe Football",Version="1.4",Config=cfg,Status="Starting",Alive=true,Candidates=0,Inspected=0,ScanCapped=false}
  local connections,cleaners,candidates,rows={}, {}, {}, {}
  local focused=true
  local scanQueue,scanIndex,missingAge={},1,0
@@ -180,10 +180,15 @@ return function(Kit,Brand,Interface,Assists,Movement)
   if not API.Alive or cfg[key]==nil or type(value)~=type(cfg[key]) then return false end
   if type(value)=="number" then
    if value~=value or math.abs(value)==math.huge then return false end
-   local bounds={JumpPower={35,85},JumpHeight={4,16},AimCone={3,12},AimRange={25,220},AimStrength={2,8},LeadTime={0,.4},CatchDistance={2,6},WalkSpeed={16,60},FieldOfView={50,110},FillTransparency={0,1}}
+   local bounds={PassSpeed={30,250},PassGravity={1,250},JumpPower={35,85},JumpHeight={4,16},AimCone={3,12},AimRange={25,220},AimStrength={2,8},LeadTime={0,.4},CatchDistance={2,6},WalkSpeed={16,60},FieldOfView={50,110},FillTransparency={0,1}}
    value=math.clamp(value,bounds[key][1],bounds[key][2])
   end
   cfg[key]=value
+  if key=="AutoMag" then cfg.AutoCatch=value;cfg.TouchCatch=value end
+  if key=="AutoThrow" then
+   if value then cfg.BallisticAim=true end
+   if API.Assists then API.Assists.Reset() end
+  end
   if API.Movement and (key=="JumpBoost" or key=="Noclip") then API.Movement.Reset() end
   if key=="QBAim" and not value and API.Assists then API.Assists.Hold(false) end
   if key=="FollowBall" and value and API.Assists then API.Assists.Hold(false) end
@@ -247,7 +252,7 @@ return function(Kit,Brand,Interface,Assists,Movement)
  end
  local started,err=pcall(function()
   API.Movement=Movement({Config=cfg,Focused=function() return focused end})
-  API.Assists=Assists({Config=cfg,Gui=gui,Create=Kit.create,Ball=function() return API.Ball end,Focused=function() return focused end})
+  API.Assists=Assists({Config=cfg,Gui=gui,Create=Kit.create,Ball=function() return API.Ball end,Focused=function() return focused end},Planner,PassMath)
   API.HoldQB=API.Assists.Hold
   API.UI=Interface({API=API,Config=cfg,Gui=gui,Brand=Brand,
    RegisterCleanup=function(fn) table.insert(cleaners,fn) end,

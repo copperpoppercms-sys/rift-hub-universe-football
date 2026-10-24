@@ -5,7 +5,7 @@ compiler=os.environ.get('LUAU_COMPILE_BIN') or shutil.which('luau-compile') or '
 luau=os.environ.get('LUAU_BIN') or shutil.which('luau') or '/workspace/luau-check/luau'
 for file in [r/'main.lua',r/'execute.lua',*list((r/'src').glob('*.lua'))]:
  subprocess.run([compiler,'--null',str(file)],capture_output=True,check=True)
-s=(r/'tests/checks.luau').read_text().replace('-- STANDALONE',(r/'main.lua').read_text())
+s=(r/'tests/checks.luau').read_text().replace('-- STANDALONE',(r/'main.lua').read_text()).replace('-- PASS MATH',(r/'src/PassMath.lua').read_text()).replace('-- PASS PLANNER',(r/'src/PassPlanner.lua').read_text())
 with tempfile.NamedTemporaryFile(mode='w',suffix='.luau') as f:
  f.write(s);f.flush();subprocess.run([luau,f.name],check=True)
 page=(r/'docs/UniverseFootball_Editor.html').read_text()

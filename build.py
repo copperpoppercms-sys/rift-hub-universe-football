@@ -2,7 +2,7 @@ from pathlib import Path
 import html
 r=Path(__file__).parent
 s='''-- RiftHub-Entry: universe-football
--- Rift Hub / Universe Football / 1.3
+-- Rift Hub / Universe Football / 1.4
 local env=type(getgenv)=="function" and getgenv() or _G
 local prior=env.RiftUniverseFootball
 if type(prior)=="table" and type(prior.Unload)=="function" then pcall(prior.Unload) end
@@ -14,10 +14,10 @@ function Kit.create(class,props,parent)
  return obj
 end
 '''
-for module in ['Brand','Interface','Assists','Movement','Runtime']:
+for module in ['Brand','Interface','PassMath','PassPlanner','Assists','Movement','Runtime']:
  s+='local '+module+'=(function()\n'+(r/'src'/f'{module}.lua').read_text()+'\nend)()\n'
 s+='''local brand=Brand("https://raw.githubusercontent.com/copperpoppercms-sys/rift-hub-universe-football/main/assets/rift_logo.jpg")
-local app=Runtime(Kit,brand,Interface,Assists,Movement)
+local app=Runtime(Kit,brand,Interface,Assists,Movement,PassPlanner,PassMath)
 app.OnUnload=function() if env.RiftUniverseFootball==app then env.RiftUniverseFootball=nil end end
 env.RiftUniverseFootball=app
 return app

@@ -282,7 +282,7 @@ local function findName(root,name)
  for _,child in ipairs(root:GetChildren()) do local got=findName(child,name);if got then return got end end
 end
 local api=boot()
-check(api.Game=='Universe Football' and api.Version=='1.3' and api.Gui.Parent,'standalone did not open')
+check(api.Game=='Universe Football' and api.Version=='1.4' and api.Gui.Parent,'standalone did not open')
 check(not api.Config.PlayerESP and not api.Config.BallHighlight and not api.Config.SpeedEnabled and not api.Config.FollowBall,'features start enabled')
 check(api.Status:find('No football',1,true),'missing football falsely reported')
 check(findName(api.Gui,'Tab_football') and findName(api.Gui,'Tab_movement'),'football/movement pages missing')
@@ -443,6 +443,62 @@ api.SetOption('InfiniteJump',true);local originalState=h.ChangeState
 h.ChangeState=function(self,state) self.LastState=state end;input.JumpRequest:Fire()
 check(h.LastState==Enum.HumanoidStateType.Jumping and api.Movement.JumpRequests==1,'jump request feature failed')
 h.ChangeState=originalState;api.Reset()
+
+-- Pass solver: verify actual intercept positions, speed and unreachable cases.
+local passMath=(function()
+-- PASS MATH
+end)()
+local plannerCtor=(function()
+-- PASS PLANNER
+end)()
+local origin=Vector3.new();local target=Vector3.new(60,0,0)
+local plan=passMath.Solve(origin,target,Vector3.new(),100,28)
+check(plan and math.abs(plan.Velocity.Magnitude-100)<.0001,'pass solver speed constraint failed')
+check((passMath.Position(plan,plan.Time)-target).Magnitude<.0001,'stationary pass missed modeled intercept')
+local receiverVelocity=Vector3.new(10,0,4)
+local moving=passMath.Solve(origin,target,receiverVelocity,100,28)
+check(moving and (passMath.Position(moving,moving.Time)-(target+receiverVelocity*moving.Time)).Magnitude<.0001,'moving receiver intercept failed')
+check(not passMath.Solve(origin,Vector3.new(1000,0,0),Vector3.new(),30,100),'unreachable pass accepted')
+check(not passMath.Solve(origin,target,Vector3.new(),0,28),'zero launch speed accepted')
+local pcfg={ManualPassModel=false,PassSpeed=100,PassGravity=28,AutoThrow=true}
+local planner=plannerCtor({Config=pcfg},passMath)
+local char=localPlayer.Character;local pr=char.PrimaryPart
+local modeled=planner.Plan(char,pr,nil,other.Character.PrimaryPart)
+check(not modeled and planner.Source=='None','unknown model fabricated a pass')
+local observed=node('Part','Football',workspace);observed.Position=Vector3.new(30,20,0);observed.Anchored=false
+for i=0,4 do observed.AssemblyLinearVelocity=Vector3.new(80,50-28*i*.1,0);planner.Observe(observed,.1) end
+local ps,pg=planner.Model(char,nil)
+check(ps and math.abs(pg-28)<.01 and planner.Source:find('Observed',1,true),'observed acceleration profile not recovered')
+observed:Destroy()
+local football=node('Tool','Football',char);football.Enabled=true
+football:SetAttribute('LaunchSpeed',100);football:SetAttribute('BallGravity',28)
+local oldRay=workspace.Raycast;workspace.Raycast=function() return nil end
+other.Character.PrimaryPart.Position=Vector3.new(60,0,0);other.Character.PrimaryPart.AssemblyLinearVelocity=Vector3.new(10,0,0)
+modeled=planner.Plan(char,pr,nil,other.Character.PrimaryPart)
+check(modeled and planner.Source=='Replicated launch metadata','replicated throw profile not preferred')
+local aimCamera={CFrame={LookVector=modeled.Velocity.Unit}}
+for i=1,3 do planner.AutoThrow(char,nil,aimCamera,modeled,.05,nil,nil) end
+check(football.Activations==1 and planner.Requests==1,'native equipped football tool did not auto-throw')
+for i=1,20 do planner.AutoThrow(char,nil,aimCamera,modeled,.05,nil,nil) end
+check(football.Activations==1,'auto throw repeated for same possession')
+planner.Reset();char:SetAttribute('busy',true)
+for i=1,5 do planner.AutoThrow(char,nil,aimCamera,modeled,.05,nil,nil) end
+check(football.Activations==1,'auto throw ignored busy lock');char:SetAttribute('busy',nil)
+local throwHUD=node('ScreenGui','ThrowHUD',localPlayer:FindFirstChild('PlayerGui'))
+local throw=node('TextButton','ThrowButton',throwHUD);local nativeThrows=0
+throw.Activated:Connect(function() nativeThrows+=1 end)
+throw:SetAttribute('OnCooldown',true)
+for i=1,5 do planner.AutoThrow(char,nil,aimCamera,modeled,.05,throw,throw.Activated) end
+check(nativeThrows==0 and football.Activations==1,'button cooldown fell through to tool throw')
+throw:SetAttribute('OnCooldown',false)
+for i=1,3 do planner.AutoThrow(char,nil,aimCamera,modeled,.05,throw,throw.Activated) end
+check(nativeThrows==1 and football.Activations==1,'native throw button not preferred')
+planner.Reset();football:Destroy()
+for i=1,5 do planner.AutoThrow(char,nil,aimCamera,modeled,.05,throw,throw.Activated) end
+check(nativeThrows==1,'auto throw requested without possession')
+workspace.Raycast=function() return {Instance=workspace} end
+check(not planner.Plan(char,pr,nil,other.Character.PrimaryPart),'blocked pass arc accepted')
+workspace.Raycast=oldRay;throwHUD:Destroy()
 local old=api;api=boot();flushSpawn();flush();check(not old.Alive and old.Gui==nil,'reexecution left old UI running')
 api.Unload();api.Unload();flushSpawn();flush();check(not env.RiftUniverseFootball and not api.Gui,'unload left global/window')
 local leaks=0

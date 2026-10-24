@@ -1,10 +1,22 @@
-# Rift Hub · Universe Football · 1.3
+# Rift Hub · Universe Football · 1.4
 
 Standalone first release, with the centered Rift logo and **N0VA_0100** credits. Animated, phone-friendly UI with Football, Movement, Visuals and Settings pages.
 
 ```lua
 loadstring(game:HttpGet("https://raw.githubusercontent.com/copperpoppercms-sys/rift-hub-universe-football/main/execute.lua?cb=" .. tostring(os.time())))()
 ```
+
+## Passing and auto mag in 1.4
+
+**Ballistic intercept mode** solves a constant-gravity pass to a moving receiver, including receiver lead over the calculated flight time. It chooses the shorter arc and checks twelve segments for map obstruction. A plan is accepted only when its computed launch speed matches the selected model and its trajectory reaches the modeled receiver position.
+
+The launch model is selected from explicit LaunchSpeed/ThrowSpeed/ProjectileSpeed/BallSpeed plus ProjectileGravity/BallGravity attributes, three consistent observed flight-acceleration samples, or an explicitly enabled manual speed/gravity model. Observed speed is an estimate; it does not prove the next throw's power setting is equivalent. The manual sliders describe physical speed/gravity and do not change UF's power bar. Without a model, the UI waits rather than treating ordinary camera lead as a solved pass.
+
+**Auto throw** enables ballistic mode and requests a supported Throw/ThrowButton/PassButton GUI handler, or calls Activate on an equipped Football/Ball tool. It requires possession, a clear modeled path, camera alignment sustained for 0.12 seconds and no exposed busy/throw cooldown. It sends at most one request for a possession; toggle off/on to retry a failed request. It does not rewrite remote packets or guarantee the native controller uses camera direction and the modeled speed. It waits when no launch model/control is available.
+
+**Auto mag** enables Auto Catch and nearby hand-contact fallback together, with a bounded 0.15-second request interval. Native catch cooldowns and the 2–6 stud request distance remain enforced. It does not pull a distant ball into your hands or prove the server counted a catch.
+
+All new features start off. Perfect throws, receptions and live UF compatibility are **not verified**. The math and native request paths are implemented; game-specific power/launch equivalence still needs live validation.
 
 ## Receiver and movement additions in 1.3
 
@@ -14,16 +26,16 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/copperpoppercms-sys/r
 - **Infinite jump:** requests Jumping on normal jump input while enabled.
 - **Noclip:** temporarily disables the local character's existing collidable body parts and restores them when disabled, focus/character eligibility is lost, reset or unload.
 
-All additions start off. Their live UF/server behavior is unverified. **QB is still camera lead, not implemented throw-packet/power automation.**
+All additions start off. Their live UF/server behavior is unverified. QB retains a camera-lead mode, with optional modeled ballistic aiming and native auto-throw requests in 1.4. Remote throw-packet rewriting is not implemented.
 
 ## QB and catch assistance
 
 - **QB assist** softly leads a confirmed teammate near the camera aim while you hold **HOLD QB ASSIST** on phone or right mouse on desktop. Adjust the cone (3–12 degrees), response, receiver range and a short velocity lead. It stops when the held finger/button releases, typing starts, focus is lost or the game locks input. Opponents, obscured players and scripted cameras are excluded. If Roblox Teams are unavailable, matching replicated TeamId/TeamName/Team/Side fields can establish teammate identity; unknown teams are not guessed. Ball-follow camera and held aiming cannot run together.
-- **Auto catch input** requests a visible native catch button only when a loose, incoming football is within the chosen 2–6 stud request distance. It checks line of sight, game catch/busy flags and exposed cooldowns, with at least 0.4 seconds between requests. It does not extend reach or guarantee a catch.
+- **Auto catch input** requests a visible native catch button only when a loose, incoming football is within the chosen 2–6 stud request distance. It checks line of sight, game catch/busy flags and exposed cooldowns, with at least 0.4 seconds between requests (0.15 with Auto Mag). It does not extend reach or guarantee a catch.
 - **Incoming football alert** shows a quiet text cue for an approaching ball within 45 studs.
 - **Receiver marker** optionally labels the selected teammate while aiming.
 
-QB assistance changes **camera aim only**. Throwing remains manual; the script does not know or rewrite the game's launch power/arc, so this is not a guaranteed pass solver. Catch assistance requires executor `firesignal` and `getconnections` support plus a visible button named Catch/CatchButton/CatchBall, carrying `Action="Catch"`, or displaying an exact Catch label (including nested mobile labels). Menu/loading branches are excluded; buttons are rescanned automatically. It checks for actual connected handlers before making requests. When unavailable, it says **No supported catch control** and includes the limitation in diagnostics. No guessed catch remote or key is fired.
+QB assistance changes camera direction; optional Auto Throw requests the native input path. The game's power mapping is not rewritten, so modeled interception is not a guaranteed live completion. Catch assistance requires executor `firesignal` and `getconnections` support plus a visible button named Catch/CatchButton/CatchBall, carrying `Action="Catch"`, or displaying an exact Catch label (including nested mobile labels). Menu/loading branches are excluded; buttons are rescanned automatically. It checks for actual connected handlers before making requests. When unavailable, it says **Waiting for a supported live catch button** and includes the limitation in diagnostics. No guessed catch remote or key is fired.
 
 All assists start off. There is no promise that assistance will go unnoticed, avoid reports or comply with a game's rules. No anti-cheat evasion is implemented.
 
@@ -52,6 +64,8 @@ This version contains no guessed throw/catch remotes, automatic tackles, server 
 
 - `main.lua`: full standalone code; `execute.lua`: source/identity-checked loader.
 - `docs/UniverseFootball_Editor.html`: complete editable script with Copy, Select and Download.
+- `src/PassMath.lua`: numerical moving-receiver intercept solver and trajectory evaluation.
+- `src/PassPlanner.lua`: observed/explicit launch profiles, arc checks, possession and native throw gating.
 - `src/Movement.lua`: owned jump settings, normal jump-input requests and restorable local collision changes.
 - `src/Assists.lua`: held teammate camera lead, input discovery, catch gates and assist diagnostics.
 - `src/Runtime.lua`: football discovery, visuals, camera/speed ownership and cleanup.

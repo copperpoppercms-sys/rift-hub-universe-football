@@ -1,13 +1,14 @@
 -- Opt-in camera lead and bounded native catch input. Never modifies a throw packet or catch hitbox.
-return function(ctx)
+return function(ctx,Planner,PassMath)
  local Players=game:GetService("Players")
  local Input=game:GetService("UserInputService")
  local player=Players.LocalPlayer
  local cfg=ctx.Config
+ local planner=Planner(ctx,PassMath)
  local M={Held=false,Target=nil,AimStatus="Off",CatchStatus="Off",CatchRequests=0,JumpRequests=0,CatchMethod="None",Alert="",LastError=nil}
  local dead=false
  local press,age,scanAt,nextCatch,nextJump= nil,0,0,0,0
- local catchButton,catchSignal,marker
+ local catchButton,catchSignal,throwButton,throwSignal,marker
  local connections={}
  local function connect(event,fn) table.insert(connections,event:Connect(fn)) end
  local function clearMarker() if marker then marker:Destroy();marker=nil end end
@@ -35,7 +36,7 @@ return function(ctx)
   return count
  end
  function M.Scan()
-  catchButton,catchSignal=nil,nil
+  catchButton,catchSignal,throwButton,throwSignal=nil,nil,nil,nil
   local pg=player:FindFirstChild("PlayerGui");if not pg then return end
   local queue=pg:GetChildren();local index,inspected=1,0
   local skip={mainmenu=true,mainmenuscreen=true,graphics=true,loading=true,viewportframe=true}
@@ -56,7 +57,13 @@ return function(ctx)
      end
      if match then
       for _,event in ipairs({node.Activated,node.MouseButton1Click}) do
-       if activeHandlers(event)>0 then catchButton,catchSignal=node,event;return end
+       if activeHandlers(event)>0 then catchButton,catchSignal=node,event;break end
+      end
+     end
+     local throwMatch=name=="throw" or name=="throwbutton" or name=="passbutton" or action=="throw" or text=="throw"
+     if throwMatch then
+      for _,event in ipairs({node.Activated,node.MouseButton1Click}) do
+       if activeHandlers(event)>0 then throwButton,throwSignal=node,event;break end
       end
      end
     end
@@ -86,6 +93,7 @@ return function(ctx)
   end
  end
  function M.Reset()
+  planner.Reset()
   M.Hold(false);M.Target=nil;M.Alert="";M.AimStatus="Off";M.CatchStatus="Off";clearMarker()
  end
  local function eligible()
@@ -106,7 +114,7 @@ return function(ctx)
   local velocity=ball.AssemblyLinearVelocity-root.AssemblyLinearVelocity
   return velocity.Magnitude>2 and velocity.Unit:Dot(delta.Unit)>.45
  end
- local function aim(cam,char,root,dt)
+ local function aim(cam,char,root,dt,ball)
   local best,bestRoot,bestChar,bestAngle
   local cone=math.cos(math.rad(cfg.AimCone))
   local ownTeam=teamKey(player)
@@ -116,8 +124,14 @@ return function(ctx)
     if r and (r.Position-root.Position).Magnitude<=cfg.AimRange then
      local delta=r.Position-cam.CFrame.Position
      local score=delta.Magnitude>.1 and cam.CFrame.LookVector:Dot(delta.Unit) or -1
+     local tracking=cfg.BallisticAim and M.Target==plr
+     if tracking then
+      local horizontal=Vector3.new(delta.X,0,delta.Z)
+      local look=Vector3.new(cam.CFrame.LookVector.X,0,cam.CFrame.LookVector.Z)
+      tracking=horizontal.Magnitude>.1 and look.Magnitude>.1 and horizontal.Unit:Dot(look.Unit)>.7
+     end
      local screen,onScreen=cam:WorldToViewportPoint(r.Position)
-     if score>=cone and onScreen and screen.Z>0 and (not bestAngle or score>bestAngle) then
+     if ((score>=cone and onScreen and screen.Z>0) or tracking) and (not bestAngle or score>bestAngle) then
       local params=RaycastParams.new();params.FilterType=Enum.RaycastFilterType.Exclude;params.FilterDescendantsInstances={char};params.IgnoreWater=true
       local hit=workspace:Raycast(cam.CFrame.Position,delta,params)
       if not hit or hit.Instance:IsDescendantOf(c) then best,bestRoot,bestChar,bestAngle=plr,r,c,score end
@@ -127,10 +141,16 @@ return function(ctx)
   end
   if best~=M.Target then clearMarker() end
   M.Target=best
-  if not best then M.AimStatus="No confirmed teammate in aim cone";return end
+  if not best then planner.Pause();M.AimStatus="No confirmed teammate in aim cone";return end
   local lead=bestRoot.AssemblyLinearVelocity*cfg.LeadTime
   if lead.Magnitude>12 then lead=lead.Unit*12 end
   local point=bestRoot.Position+Vector3.new(0,1,0)+lead
+  local plan
+  if cfg.BallisticAim then
+   plan=planner.Plan(char,root,ball,bestRoot)
+   if not plan then planner.Pause();M.AimStatus=planner.Status;return end
+   point=cam.CFrame.Position+plan.Velocity.Unit*1000
+  end
   if (point-cam.CFrame.Position).Magnitude>.1 then
    cam.CFrame=cam.CFrame:Lerp(CFrame.lookAt(cam.CFrame.Position,point),1-math.exp(-cfg.AimStrength*dt))
   end
@@ -140,24 +160,28 @@ return function(ctx)
    ctx.Create("TextLabel",{Size=UDim2.fromScale(1,1),BackgroundTransparency=1,Text="RECEIVER · @"..best.Name,
     Font=Enum.Font.GothamBold,TextSize=11,TextColor3=Color3.fromRGB(255,215,131),TextStrokeTransparency=.4},marker)
   elseif not cfg.ReceiverMarker then clearMarker() end
-  M.AimStatus="Leading @"..best.Name.." · throw manually"
+  if cfg.AutoThrow then planner.AutoThrow(char,ball,cam,plan,dt,throwButton,throwSignal) end
+  M.AimStatus=cfg.BallisticAim and ("@"..best.Name.." · "..planner.Status) or "Leading @"..best.Name.." · throw manually"
  end
  function M.Step(dt)
   if dead then return end
-  dt=math.clamp(tonumber(dt) or 0,0,.05);age+=dt
+  local observedDt=math.clamp(tonumber(dt) or 0,0,.2)
+  dt=math.min(observedDt,.05);age+=observedDt
   local char,hum,root=eligible()
-  if not char then M.Hold(false);M.CatchStatus="Paused for character/input";M.Alert="";return end
+  if not char then planner.Pause();M.Hold(false);M.CatchStatus="Paused for character/input";M.Alert="";return end
   local ball=ctx.Ball()
+  planner.Observe(ball,observedDt)
+  if (cfg.AutoCatch or cfg.AutoThrow) and age>=scanAt then M.Scan();scanAt=age+1 end
   M.Alert=cfg.IncomingAlert and incoming(ball,root,45) and "INCOMING FOOTBALL" or ""
   if cfg.AutoJump and age>=nextJump and hum.FloorMaterial~=Enum.Material.Air and incoming(ball,root,12)
    and ball.Position.Y-root.Position.Y>3 and char:GetAttribute("canRun")~=false then
    hum.Jump=true;M.JumpRequests+=1;nextJump=age+.8
   end
   local cam=workspace.CurrentCamera
-  if cfg.QBAim and M.Held and cam and cam.CameraType~=Enum.CameraType.Scriptable and not cfg.FollowBall then aim(cam,char,root,dt)
-  else M.Target=nil;clearMarker();M.AimStatus=cfg.QBAim and "Hold QB ASSIST or right mouse · aim near teammate" or "Off" end
+  local autoPossession=cfg.AutoThrow and planner.HasPossession(char,ball)
+  if ((cfg.QBAim and M.Held) or autoPossession) and cam and cam.CameraType~=Enum.CameraType.Scriptable and not cfg.FollowBall then aim(cam,char,root,dt,ball)
+  else M.Target=nil;clearMarker();M.AimStatus=cfg.AutoThrow and "Auto throw waiting for possession" or cfg.QBAim and "Hold QB ASSIST or right mouse · aim near teammate" or "Off" end
   if not cfg.AutoCatch then M.CatchStatus="Off";return end
-  if age>=scanAt then M.Scan();scanAt=age+1 end
   local native=type(firesignal)=="function" and catchButton~=nil
   local contact=cfg.TouchCatch and type(firetouchinterest)=="function"
   if not native and not contact then M.CatchStatus="Waiting for a supported live catch button";return end
@@ -168,7 +192,7 @@ return function(ctx)
   local params=RaycastParams.new();params.FilterType=Enum.RaycastFilterType.Exclude;params.FilterDescendantsInstances={char};params.IgnoreWater=true
   local hit=workspace:Raycast(root.Position,ball.Position-root.Position,params)
   if hit and hit.Instance~=ball then M.CatchStatus="Football obstructed";return end
-  nextCatch=age+.4
+  nextCatch=age+(cfg.AutoMag and .15 or .4)
   local ok,err
   if native then
    ok,err=pcall(firesignal,catchSignal);M.CatchMethod="Native catch control"
@@ -188,12 +212,13 @@ return function(ctx)
   if ok then M.CatchRequests+=1;M.CatchStatus=(native and "Catch input requested" or "Hand contact requested").." · server result unverified"
   else M.LastError=tostring(err);M.CatchStatus="Catch input failed" end
  end
+ M.Planner=planner
  function M.Diagnostics()
-  return table.concat({"QB assist: "..M.AimStatus,"Catch: "..M.CatchStatus.." | requests="..M.CatchRequests,
+  return table.concat({planner.Diagnostics(),"QB assist: "..M.AimStatus,"Catch: "..M.CatchStatus.." | requests="..M.CatchRequests,
    "Catch control: "..(catchButton and catchButton.Parent and catchButton:GetFullName() or "none"),
    "Catch path: "..M.CatchMethod.." | jump requests="..M.JumpRequests,
    "Input support: firetouchinterest="..tostring(type(firetouchinterest)=="function")..", firesignal="..tostring(type(firesignal)=="function")..", getconnections="..tostring(type(getconnections)=="function"),
-   "Assist error: "..tostring(M.LastError),"QB assist changes camera aim only; throw power/arc and catch acceptance remain game-controlled."},"\n")
+   "Assist error: "..tostring(M.LastError),"Solved arcs assume the selected launch model. Native throw requests and hand contacts do not confirm server completion."},"\n")
  end
  connect(Input.InputBegan,function(input,processed)
   if not processed and input.UserInputType==Enum.UserInputType.MouseButton2 then M.Hold(true,input) end

@@ -1,5 +1,5 @@
 -- RiftHub-Entry: universe-football
--- Rift Hub / Universe Football / 1.3
+-- Rift Hub / Universe Football / 1.4
 local env=type(getgenv)=="function" and getgenv() or _G
 local prior=env.RiftUniverseFootball
 if type(prior)=="table" and type(prior.Unload)=="function" then pcall(prior.Unload) end
@@ -119,7 +119,7 @@ return function(ctx)
     local close=headerButton("Close","×",-43);local minimize=headerButton("Minimize","−",-78)
     local side=make("Frame",{Name="Sidebar",Position=UDim2.fromOffset(0,64),Size=UDim2.new(0,136,1,-64),BackgroundColor3=C.Panel,BorderSizePixel=0},surface)
     local content=make("Frame",{Position=UDim2.fromOffset(136,64),Size=UDim2.new(1,-136,1,-91),BackgroundTransparency=1,ClipsDescendants=true},surface)
-    local footer=text(surface,"N0VA_0100  /  RIFT UF 1.3",9,C.Sub,UDim2.new(0,151,1,-23),UDim2.new(1,-166,0,18))
+    local footer=text(surface,"N0VA_0100  /  RIFT UF 1.4",9,C.Sub,UDim2.new(0,151,1,-23),UDim2.new(1,-166,0,18))
     local marker=make("Frame",{Position=UDim2.fromOffset(0,24),Size=UDim2.fromOffset(3,22),BackgroundColor3=C.Accent,BorderSizePixel=0},side);round(marker,2)
     local pages,tabs,selected={},{},"football"
     local function select(id)
@@ -196,7 +196,7 @@ return function(ctx)
         local b=make("TextButton",{Name=name,Text=title,Size=UDim2.new(1,0,0,37),Font=Enum.Font.GothamBold,TextSize=12,
             TextColor3=C.Text,BackgroundColor3=C.Raised,AutoButtonColor=false,BorderSizePixel=0},parent);round(b,8);hover(b);connect(b.Activated,fn);return b
     end
-    local qb=section(M.football,"QB ASSIST","Gentle camera lead toward a confirmed teammate near your aim. Hold the button or right mouse; throwing stays manual. Does not calculate the game's throw power or guarantee completions.")
+    local qb=section(M.football,"QB ASSIST","Gentle camera lead toward a confirmed teammate near your aim. Hold the button or right mouse for assisted aim. Auto throw separately requests a detected native control or equipped football tool. Ballistic mode computes an intercept from launch metadata, observed passes, or your manual launch model. Game throw power must match that model.")
     toggle(qb,"QBAim","Enable QB aim assistance")
     local hold=button(qb,"HoldQB","HOLD QB ASSIST",function() end)
     connect(hold.InputBegan,function(input)
@@ -207,8 +207,14 @@ return function(ctx)
     slider(qb,"LeadTime","Receiver lead (seconds)",0,.4)
     slider(qb,"AimRange","Receiver range",25,220)
     toggle(qb,"ReceiverMarker","Show selected receiver")
+    toggle(qb,"BallisticAim","Ballistic intercept mode")
+    toggle(qb,"AutoThrow","Auto throw (native control/tool)")
+    toggle(qb,"ManualPassModel","Use manual launch model")
+    slider(qb,"PassSpeed","Model speed (studs/sec)",30,250)
+    slider(qb,"PassGravity","Model gravity (studs/sec²)",1,250)
     local qbStatus=text(qb,"Off",10,C.Sub,nil,UDim2.new(1,0,0,32));qbStatus.TextWrapped=true
     local catching=section(M.football,"CATCH ASSIST","Requests the visible native catch button for a nearby incoming football. Requires a detected catch button and executor signal support; no hitbox or remote changes.")
+    toggle(catching,"AutoMag","Auto mag · nearby hand contact")
     toggle(catching,"AutoCatch","Auto catch input")
     toggle(catching,"TouchCatch","Hand-contact fallback (executor support required)")
     toggle(catching,"AutoJump","Auto jump for nearby overhead passes")
@@ -317,17 +323,174 @@ return function(ctx)
 end
 
 end)()
+local PassMath=(function()
+-- Constant-velocity receiver intercept under constant downward projectile gravity.
+local M={}
+function M.Solve(origin,target,receiverVelocity,speed,gravity,maxTime)
+ if speed<=0 or gravity<0 or speed~=speed or gravity~=gravity then return nil,"Invalid launch model" end
+ local delta=target-origin
+ local g=Vector3.new(0,-gravity,0)
+ local function velocity(t) return (delta+receiverVelocity*t-g*(.5*t*t))*(1/t) end
+ local function errorAt(t) return velocity(t).Magnitude-speed end
+ local previousTime,previousError=.06,errorAt(.06)
+ local limit=maxTime or 5
+ -- The first root is the lower/shorter arc. Bracket before refining.
+ for i=1,160 do
+  local t=.06+(limit-.06)*i/160
+  local e=errorAt(t)
+  if previousError>0 and e<=0 then
+   local lo,hi=previousTime,t
+   for _=1,28 do
+    local mid=(lo+hi)*.5
+    if errorAt(mid)>0 then lo=mid else hi=mid end
+   end
+   local flight=(lo+hi)*.5
+   return {Velocity=velocity(flight),Time=flight,Point=target+receiverVelocity*flight,Origin=origin,Gravity=gravity}
+  end
+  previousTime,previousError=t,e
+ end
+ return nil,"Receiver outside modeled pass range"
+end
+function M.Position(plan,time)
+ return plan.Origin+plan.Velocity*time+Vector3.new(0,-plan.Gravity*.5*time*time,0)
+end
+return M
+
+end)()
+local PassPlanner=(function()
+-- Launch models come from explicit metadata, observed flight, or an explicit manual model.
+-- A solved arc is a model result, not proof that UF's throw controller uses the same inputs.
+return function(ctx,Math)
+ local M={Status="Waiting for a launch model",Requests=0,Source="None"}
+ local cfg=ctx.Config
+ local sample,clock,profile,stable,attempted= nil,0,nil,0,nil
+ local function attribute(nodes,names)
+  for _,node in ipairs(nodes) do
+   if node then for _,name in ipairs(names) do
+    local value=tonumber(node:GetAttribute(name))
+    if value and value>0 and value<1500 then return value end
+   end end
+  end
+ end
+ local function ownedTool(char)
+  for _,node in ipairs(char:GetChildren()) do
+   if node:IsA("Tool") then
+    local name=node.Name:lower():gsub('[%s_%-]','')
+    if name=="football" or name=="ball" or node:GetAttribute("IsFootball")==true then return node end
+   end
+  end
+ end
+ function M.Observe(ball,dt)
+  clock+=dt
+  if not ball or not ball.Parent or ball.Anchored then sample=nil;return end
+  if ball:FindFirstAncestorOfClass("Tool") then sample=nil;return end
+  local model=ball:FindFirstAncestorOfClass("Model")
+  if model and game:GetService("Players"):GetPlayerFromCharacter(model) then sample=nil;return end
+  local velocity=ball.AssemblyLinearVelocity
+  if velocity.Magnitude<20 then sample=nil;return end
+  if sample and sample.Ball==ball then
+   local duration=clock-sample.Clock
+   if duration>=.08 then
+    local acceleration=(velocity-sample.Velocity)*(1/duration)
+    local horizontal=Vector3.new(acceleration.X,0,acceleration.Z).Magnitude
+    local gravity=-acceleration.Y
+    if gravity>=1 and gravity<=350 and horizontal<25 then
+     -- Use only consecutive descending acceleration samples; never infer from a collision.
+     local n=(sample.Valid or 0)+1
+     local estimate=sample.Gravity and sample.Gravity*.65+gravity*.35 or gravity
+     if n>=3 then
+      profile={Speed=sample.LaunchSpeed,Gravity=estimate,Ball=ball,At=clock}
+     end
+     sample.Valid=n;sample.Gravity=estimate
+    else sample.Valid=0 end
+    sample.Clock=clock;sample.Velocity=velocity
+   end
+  else sample={Ball=ball,Clock=clock,Velocity=velocity,LaunchSpeed=velocity.Magnitude,Valid=0} end
+ end
+ function M.Model(char,ball)
+  local tool=ownedTool(char)
+  local nodes={tool or false,ball or false,char}
+  local speed=attribute(nodes,{"LaunchSpeed","ThrowSpeed","ProjectileSpeed","BallSpeed"})
+  local gravity=attribute(nodes,{"ProjectileGravity","BallGravity"})
+  if speed and gravity then M.Source="Replicated launch metadata";return speed,gravity end
+  if cfg.ManualPassModel then M.Source="Manual model · must match game's actual power";return cfg.PassSpeed,cfg.PassGravity end
+  if profile and clock-profile.At<90 then
+   M.Source="Observed pass estimate · power equivalence unverified"
+   return profile.Speed,profile.Gravity
+  end
+  M.Source="None";return nil,nil
+ end
+ function M.Plan(char,root,ball,targetRoot)
+  local speed,gravity=M.Model(char,ball)
+  if not speed then M.Status="Waiting to observe a pass or find launch metadata";return end
+  local owned=ball and ball:IsDescendantOf(char)
+  local origin=owned and ball.Position or root.Position+Vector3.new(0,2,0)
+  local plan,reason=Math.Solve(origin,targetRoot.Position+Vector3.new(0,1,0),targetRoot.AssemblyLinearVelocity,speed,gravity,5)
+  if not plan then M.Status=reason;return end
+  -- Validate the modeled arc against solid geometry before requesting a throw.
+  local params=RaycastParams.new();params.FilterType=Enum.RaycastFilterType.Exclude;params.IgnoreWater=true
+  params.FilterDescendantsInstances={char,ball or char}
+  local previous=origin
+  for i=1,12 do
+   local point=Math.Position(plan,plan.Time*i/12)
+   local hit=workspace:Raycast(previous,point-previous,params)
+   if hit and not hit.Instance:IsDescendantOf(targetRoot.Parent) then M.Status="Modeled pass arc blocked";return end
+   previous=point
+  end
+  M.Status=string.format("Modeled intercept %.2fs · %s",plan.Time,M.Source)
+  M.LastPlan=plan;return plan
+ end
+ function M.HasPossession(char,ball)
+  local key=ownedTool(char) or ball and ball:IsDescendantOf(char) and ball
+  if not key then attempted=nil;stable=0 end
+  return key
+ end
+ function M.AutoThrow(char,ball,cam,plan,dt,button,signal)
+  if not cfg.AutoThrow then stable=0;return end
+  local tool=ownedTool(char)
+  local possessed=M.HasPossession(char,ball)
+  if not possessed then attempted=nil;stable=0;M.Status="Auto throw waiting for possession";return end
+  if attempted==possessed then M.Status="Throw already requested for this possession";return end
+  if not plan then stable=0;return end
+  if char:GetAttribute("busy")==true or char:GetAttribute("canThrow")==false or possessed:GetAttribute("OnCooldown")==true then stable=0;return end
+  if cam.CFrame.LookVector:Dot(plan.Velocity.Unit)<math.cos(math.rad(1)) then stable=0;return end
+  stable+=dt;if stable<.12 then return end
+  if button and button.Parent then
+   local node=button
+   while node do
+    if node:IsA("GuiObject") and not node.Visible or node:IsA("ScreenGui") and not node.Enabled then M.Status="Throw control hidden";return end
+    node=node.Parent
+   end
+   if button:GetAttribute("OnCooldown")==true or (tonumber(button:GetAttribute("CooldownRemaining")) or 0)>0 then M.Status="Throw cooldown active";return end
+  end
+  local ok,err
+  if button and button.Parent and signal and type(firesignal)=="function" then
+   ok,err=pcall(firesignal,signal)
+  elseif tool and tool.Enabled~=false then ok,err=pcall(function() tool:Activate() end)
+  else M.Status="No native throw button or equipped football tool";return end
+  attempted=possessed;stable=0
+  if ok then M.Requests+=1;M.Status="Native throw requested · launch unverified"
+  else M.Status="Throw request failed: "..tostring(err) end
+ end
+ function M.Pause() stable=0 end
+ function M.Reset() stable=0;attempted=nil;M.LastPlan=nil end
+ function M.Diagnostics() return "Pass planner: "..M.Status.." | requests="..M.Requests.." | model="..M.Source end
+ return M
+end
+
+end)()
 local Assists=(function()
 -- Opt-in camera lead and bounded native catch input. Never modifies a throw packet or catch hitbox.
-return function(ctx)
+return function(ctx,Planner,PassMath)
  local Players=game:GetService("Players")
  local Input=game:GetService("UserInputService")
  local player=Players.LocalPlayer
  local cfg=ctx.Config
+ local planner=Planner(ctx,PassMath)
  local M={Held=false,Target=nil,AimStatus="Off",CatchStatus="Off",CatchRequests=0,JumpRequests=0,CatchMethod="None",Alert="",LastError=nil}
  local dead=false
  local press,age,scanAt,nextCatch,nextJump= nil,0,0,0,0
- local catchButton,catchSignal,marker
+ local catchButton,catchSignal,throwButton,throwSignal,marker
  local connections={}
  local function connect(event,fn) table.insert(connections,event:Connect(fn)) end
  local function clearMarker() if marker then marker:Destroy();marker=nil end end
@@ -355,7 +518,7 @@ return function(ctx)
   return count
  end
  function M.Scan()
-  catchButton,catchSignal=nil,nil
+  catchButton,catchSignal,throwButton,throwSignal=nil,nil,nil,nil
   local pg=player:FindFirstChild("PlayerGui");if not pg then return end
   local queue=pg:GetChildren();local index,inspected=1,0
   local skip={mainmenu=true,mainmenuscreen=true,graphics=true,loading=true,viewportframe=true}
@@ -376,7 +539,13 @@ return function(ctx)
      end
      if match then
       for _,event in ipairs({node.Activated,node.MouseButton1Click}) do
-       if activeHandlers(event)>0 then catchButton,catchSignal=node,event;return end
+       if activeHandlers(event)>0 then catchButton,catchSignal=node,event;break end
+      end
+     end
+     local throwMatch=name=="throw" or name=="throwbutton" or name=="passbutton" or action=="throw" or text=="throw"
+     if throwMatch then
+      for _,event in ipairs({node.Activated,node.MouseButton1Click}) do
+       if activeHandlers(event)>0 then throwButton,throwSignal=node,event;break end
       end
      end
     end
@@ -406,6 +575,7 @@ return function(ctx)
   end
  end
  function M.Reset()
+  planner.Reset()
   M.Hold(false);M.Target=nil;M.Alert="";M.AimStatus="Off";M.CatchStatus="Off";clearMarker()
  end
  local function eligible()
@@ -426,7 +596,7 @@ return function(ctx)
   local velocity=ball.AssemblyLinearVelocity-root.AssemblyLinearVelocity
   return velocity.Magnitude>2 and velocity.Unit:Dot(delta.Unit)>.45
  end
- local function aim(cam,char,root,dt)
+ local function aim(cam,char,root,dt,ball)
   local best,bestRoot,bestChar,bestAngle
   local cone=math.cos(math.rad(cfg.AimCone))
   local ownTeam=teamKey(player)
@@ -436,8 +606,14 @@ return function(ctx)
     if r and (r.Position-root.Position).Magnitude<=cfg.AimRange then
      local delta=r.Position-cam.CFrame.Position
      local score=delta.Magnitude>.1 and cam.CFrame.LookVector:Dot(delta.Unit) or -1
+     local tracking=cfg.BallisticAim and M.Target==plr
+     if tracking then
+      local horizontal=Vector3.new(delta.X,0,delta.Z)
+      local look=Vector3.new(cam.CFrame.LookVector.X,0,cam.CFrame.LookVector.Z)
+      tracking=horizontal.Magnitude>.1 and look.Magnitude>.1 and horizontal.Unit:Dot(look.Unit)>.7
+     end
      local screen,onScreen=cam:WorldToViewportPoint(r.Position)
-     if score>=cone and onScreen and screen.Z>0 and (not bestAngle or score>bestAngle) then
+     if ((score>=cone and onScreen and screen.Z>0) or tracking) and (not bestAngle or score>bestAngle) then
       local params=RaycastParams.new();params.FilterType=Enum.RaycastFilterType.Exclude;params.FilterDescendantsInstances={char};params.IgnoreWater=true
       local hit=workspace:Raycast(cam.CFrame.Position,delta,params)
       if not hit or hit.Instance:IsDescendantOf(c) then best,bestRoot,bestChar,bestAngle=plr,r,c,score end
@@ -447,10 +623,16 @@ return function(ctx)
   end
   if best~=M.Target then clearMarker() end
   M.Target=best
-  if not best then M.AimStatus="No confirmed teammate in aim cone";return end
+  if not best then planner.Pause();M.AimStatus="No confirmed teammate in aim cone";return end
   local lead=bestRoot.AssemblyLinearVelocity*cfg.LeadTime
   if lead.Magnitude>12 then lead=lead.Unit*12 end
   local point=bestRoot.Position+Vector3.new(0,1,0)+lead
+  local plan
+  if cfg.BallisticAim then
+   plan=planner.Plan(char,root,ball,bestRoot)
+   if not plan then planner.Pause();M.AimStatus=planner.Status;return end
+   point=cam.CFrame.Position+plan.Velocity.Unit*1000
+  end
   if (point-cam.CFrame.Position).Magnitude>.1 then
    cam.CFrame=cam.CFrame:Lerp(CFrame.lookAt(cam.CFrame.Position,point),1-math.exp(-cfg.AimStrength*dt))
   end
@@ -460,24 +642,28 @@ return function(ctx)
    ctx.Create("TextLabel",{Size=UDim2.fromScale(1,1),BackgroundTransparency=1,Text="RECEIVER · @"..best.Name,
     Font=Enum.Font.GothamBold,TextSize=11,TextColor3=Color3.fromRGB(255,215,131),TextStrokeTransparency=.4},marker)
   elseif not cfg.ReceiverMarker then clearMarker() end
-  M.AimStatus="Leading @"..best.Name.." · throw manually"
+  if cfg.AutoThrow then planner.AutoThrow(char,ball,cam,plan,dt,throwButton,throwSignal) end
+  M.AimStatus=cfg.BallisticAim and ("@"..best.Name.." · "..planner.Status) or "Leading @"..best.Name.." · throw manually"
  end
  function M.Step(dt)
   if dead then return end
-  dt=math.clamp(tonumber(dt) or 0,0,.05);age+=dt
+  local observedDt=math.clamp(tonumber(dt) or 0,0,.2)
+  dt=math.min(observedDt,.05);age+=observedDt
   local char,hum,root=eligible()
-  if not char then M.Hold(false);M.CatchStatus="Paused for character/input";M.Alert="";return end
+  if not char then planner.Pause();M.Hold(false);M.CatchStatus="Paused for character/input";M.Alert="";return end
   local ball=ctx.Ball()
+  planner.Observe(ball,observedDt)
+  if (cfg.AutoCatch or cfg.AutoThrow) and age>=scanAt then M.Scan();scanAt=age+1 end
   M.Alert=cfg.IncomingAlert and incoming(ball,root,45) and "INCOMING FOOTBALL" or ""
   if cfg.AutoJump and age>=nextJump and hum.FloorMaterial~=Enum.Material.Air and incoming(ball,root,12)
    and ball.Position.Y-root.Position.Y>3 and char:GetAttribute("canRun")~=false then
    hum.Jump=true;M.JumpRequests+=1;nextJump=age+.8
   end
   local cam=workspace.CurrentCamera
-  if cfg.QBAim and M.Held and cam and cam.CameraType~=Enum.CameraType.Scriptable and not cfg.FollowBall then aim(cam,char,root,dt)
-  else M.Target=nil;clearMarker();M.AimStatus=cfg.QBAim and "Hold QB ASSIST or right mouse · aim near teammate" or "Off" end
+  local autoPossession=cfg.AutoThrow and planner.HasPossession(char,ball)
+  if ((cfg.QBAim and M.Held) or autoPossession) and cam and cam.CameraType~=Enum.CameraType.Scriptable and not cfg.FollowBall then aim(cam,char,root,dt,ball)
+  else M.Target=nil;clearMarker();M.AimStatus=cfg.AutoThrow and "Auto throw waiting for possession" or cfg.QBAim and "Hold QB ASSIST or right mouse · aim near teammate" or "Off" end
   if not cfg.AutoCatch then M.CatchStatus="Off";return end
-  if age>=scanAt then M.Scan();scanAt=age+1 end
   local native=type(firesignal)=="function" and catchButton~=nil
   local contact=cfg.TouchCatch and type(firetouchinterest)=="function"
   if not native and not contact then M.CatchStatus="Waiting for a supported live catch button";return end
@@ -488,7 +674,7 @@ return function(ctx)
   local params=RaycastParams.new();params.FilterType=Enum.RaycastFilterType.Exclude;params.FilterDescendantsInstances={char};params.IgnoreWater=true
   local hit=workspace:Raycast(root.Position,ball.Position-root.Position,params)
   if hit and hit.Instance~=ball then M.CatchStatus="Football obstructed";return end
-  nextCatch=age+.4
+  nextCatch=age+(cfg.AutoMag and .15 or .4)
   local ok,err
   if native then
    ok,err=pcall(firesignal,catchSignal);M.CatchMethod="Native catch control"
@@ -508,12 +694,13 @@ return function(ctx)
   if ok then M.CatchRequests+=1;M.CatchStatus=(native and "Catch input requested" or "Hand contact requested").." · server result unverified"
   else M.LastError=tostring(err);M.CatchStatus="Catch input failed" end
  end
+ M.Planner=planner
  function M.Diagnostics()
-  return table.concat({"QB assist: "..M.AimStatus,"Catch: "..M.CatchStatus.." | requests="..M.CatchRequests,
+  return table.concat({planner.Diagnostics(),"QB assist: "..M.AimStatus,"Catch: "..M.CatchStatus.." | requests="..M.CatchRequests,
    "Catch control: "..(catchButton and catchButton.Parent and catchButton:GetFullName() or "none"),
    "Catch path: "..M.CatchMethod.." | jump requests="..M.JumpRequests,
    "Input support: firetouchinterest="..tostring(type(firetouchinterest)=="function")..", firesignal="..tostring(type(firesignal)=="function")..", getconnections="..tostring(type(getconnections)=="function"),
-   "Assist error: "..tostring(M.LastError),"QB assist changes camera aim only; throw power/arc and catch acceptance remain game-controlled."},"\n")
+   "Assist error: "..tostring(M.LastError),"Solved arcs assume the selected launch model. Native throw requests and hand contacts do not confirm server completion."},"\n")
  end
  connect(Input.InputBegan,function(input,processed)
   if not processed and input.UserInputType==Enum.UserInputType.MouseButton2 then M.Hold(true,input) end
@@ -600,16 +787,16 @@ end
 end)()
 local Runtime=(function()
 -- Universe Football first release: replicated ball/player utilities and owned settings.
-return function(Kit,Brand,Interface,Assists,Movement)
+return function(Kit,Brand,Interface,Assists,Movement,Planner,PassMath)
  local Players=game:GetService("Players")
  local Run=game:GetService("RunService")
  local Input=game:GetService("UserInputService")
  local player=Players.LocalPlayer
- local defaults={TouchCatch=false,AutoJump=false,JumpBoost=false,JumpPower=60,JumpHeight=9,InfiniteJump=false,Noclip=false,QBAim=false,AutoCatch=false,IncomingAlert=false,ReceiverMarker=false,AimCone=6,AimRange=160,AimStrength=4,LeadTime=.18,CatchDistance=5,
+ local defaults={BallisticAim=false,AutoThrow=false,ManualPassModel=false,PassSpeed=110,PassGravity=28,AutoMag=false,TouchCatch=false,AutoJump=false,JumpBoost=false,JumpPower=60,JumpHeight=9,InfiniteJump=false,Noclip=false,QBAim=false,AutoCatch=false,IncomingAlert=false,ReceiverMarker=false,AimCone=6,AimRange=160,AimStrength=4,LeadTime=.18,CatchDistance=5,
   BallHighlight=false,BallName=false,FollowBall=false,FieldOfView=80,CustomFOV=false,
   SpeedEnabled=false,WalkSpeed=24,PlayerESP=false,PlayerNames=false,ShowTeammates=true,FillTransparency=.65,ReduceMotion=false}
  local cfg=table.clone(defaults)
- local API={Game="Universe Football",Version="1.3",Config=cfg,Status="Starting",Alive=true,Candidates=0,Inspected=0,ScanCapped=false}
+ local API={Game="Universe Football",Version="1.4",Config=cfg,Status="Starting",Alive=true,Candidates=0,Inspected=0,ScanCapped=false}
  local connections,cleaners,candidates,rows={}, {}, {}, {}
  local focused=true
  local scanQueue,scanIndex,missingAge={},1,0
@@ -781,10 +968,15 @@ return function(Kit,Brand,Interface,Assists,Movement)
   if not API.Alive or cfg[key]==nil or type(value)~=type(cfg[key]) then return false end
   if type(value)=="number" then
    if value~=value or math.abs(value)==math.huge then return false end
-   local bounds={JumpPower={35,85},JumpHeight={4,16},AimCone={3,12},AimRange={25,220},AimStrength={2,8},LeadTime={0,.4},CatchDistance={2,6},WalkSpeed={16,60},FieldOfView={50,110},FillTransparency={0,1}}
+   local bounds={PassSpeed={30,250},PassGravity={1,250},JumpPower={35,85},JumpHeight={4,16},AimCone={3,12},AimRange={25,220},AimStrength={2,8},LeadTime={0,.4},CatchDistance={2,6},WalkSpeed={16,60},FieldOfView={50,110},FillTransparency={0,1}}
    value=math.clamp(value,bounds[key][1],bounds[key][2])
   end
   cfg[key]=value
+  if key=="AutoMag" then cfg.AutoCatch=value;cfg.TouchCatch=value end
+  if key=="AutoThrow" then
+   if value then cfg.BallisticAim=true end
+   if API.Assists then API.Assists.Reset() end
+  end
   if API.Movement and (key=="JumpBoost" or key=="Noclip") then API.Movement.Reset() end
   if key=="QBAim" and not value and API.Assists then API.Assists.Hold(false) end
   if key=="FollowBall" and value and API.Assists then API.Assists.Hold(false) end
@@ -848,7 +1040,7 @@ return function(Kit,Brand,Interface,Assists,Movement)
  end
  local started,err=pcall(function()
   API.Movement=Movement({Config=cfg,Focused=function() return focused end})
-  API.Assists=Assists({Config=cfg,Gui=gui,Create=Kit.create,Ball=function() return API.Ball end,Focused=function() return focused end})
+  API.Assists=Assists({Config=cfg,Gui=gui,Create=Kit.create,Ball=function() return API.Ball end,Focused=function() return focused end},Planner,PassMath)
   API.HoldQB=API.Assists.Hold
   API.UI=Interface({API=API,Config=cfg,Gui=gui,Brand=Brand,
    RegisterCleanup=function(fn) table.insert(cleaners,fn) end,
@@ -871,7 +1063,7 @@ end
 
 end)()
 local brand=Brand("https://raw.githubusercontent.com/copperpoppercms-sys/rift-hub-universe-football/main/assets/rift_logo.jpg")
-local app=Runtime(Kit,brand,Interface,Assists,Movement)
+local app=Runtime(Kit,brand,Interface,Assists,Movement,PassPlanner,PassMath)
 app.OnUnload=function() if env.RiftUniverseFootball==app then env.RiftUniverseFootball=nil end end
 env.RiftUniverseFootball=app
 return app
