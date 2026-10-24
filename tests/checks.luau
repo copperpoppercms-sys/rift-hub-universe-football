@@ -219,7 +219,7 @@ end
 character(localPlayer); character(other)
 node("PlayerGui","PlayerGui",localPlayer)
 local coreGui=node("CoreGui","CoreGui")
-local run={ Heartbeat=signal(), RenderStepped=signal(),PreSimulation=signal() }
+local run={ Stepped=signal(),Heartbeat=signal(), RenderStepped=signal(),PreSimulation=signal() }
 local renderBindings={}
 function run:BindToRenderStep(name, priority, fn) renderBindings[name]={priority=priority,fn=fn} end
 function run:UnbindFromRenderStep(name) renderBindings[name]=nil end
@@ -253,6 +253,7 @@ local warnings={}
 local warn=function(value) table.insert(warnings,value) end
 local getgenv=function() return env end
 local clipboard
+local firetouchinterest
 local setclipboard=function(value) clipboard=value end
 local firesignal=function(s,...) s:Fire(...) end
 local getconnections=function(s)
@@ -281,7 +282,7 @@ local function findName(root,name)
  for _,child in ipairs(root:GetChildren()) do local got=findName(child,name);if got then return got end end
 end
 local api=boot()
-check(api.Game=='Universe Football' and api.Version=='1.2' and api.Gui.Parent,'standalone did not open')
+check(api.Game=='Universe Football' and api.Version=='1.3' and api.Gui.Parent,'standalone did not open')
 check(not api.Config.PlayerESP and not api.Config.BallHighlight and not api.Config.SpeedEnabled and not api.Config.FollowBall,'features start enabled')
 check(api.Status:find('No football',1,true),'missing football falsely reported')
 check(findName(api.Gui,'Tab_football') and findName(api.Gui,'Tab_movement'),'football/movement pages missing')
@@ -408,6 +409,40 @@ api.SetOption('AutoCatch',true);api.Assists.Scan();api.Assists.Step(.05)
 check(nestedRequests==1,'nested catch label did not resolve native button')
 api.SetOption('AutoCatch',false);nestedHUD:Destroy()
 
+
+-- Contact fallback is bounded to nearby hands and never reports a reception as confirmed.
+local contacts={};firetouchinterest=function(a,b,phase) table.insert(contacts,{a,b,phase}) end
+local hand=node('Part','LeftHand',localPlayer.Character);hand.Position=Vector3.new()
+generic.Position=Vector3.new(0,0,-4);generic.AssemblyLinearVelocity=Vector3.new(0,0,15)
+api.SetOption('TouchCatch',true);api.SetOption('AutoCatch',true);api.Assists.Scan()
+for i=1,10 do api.Assists.Step(.05) end
+check(#contacts==2 and contacts[1][3]==0 and contacts[2][3]==1,'touch fallback did not pair begin/end')
+check(api.Assists.CatchMethod=='Close-range hand contact','fallback path not reported')
+hand.Position=Vector3.new(50,0,0);local before=#contacts
+for i=1,10 do api.Assists.Step(.05) end
+check(#contacts==before,'contact fallback used an out-of-range hand')
+api.SetOption('AutoCatch',false);hand:Destroy();firetouchinterest=nil
+-- Auto jump requests ordinary jumping for close overhead incoming passes, with a cooldown.
+api.SetOption('AutoJump',true);h.FloorMaterial=Enum.Material.Grass;h.Jump=false
+local root=localPlayer.Character.PrimaryPart;root.AssemblyLinearVelocity=Vector3.new()
+generic.Position=Vector3.new(0,5,-3);generic.AssemblyLinearVelocity=Vector3.new(0,-12,12)
+api.Assists.Step(.05);check(h.Jump and api.Assists.JumpRequests==1,'overhead incoming pass did not request jump')
+h.Jump=false;api.Assists.Step(.05);check(not h.Jump,'auto jump ignored request cooldown')
+h.FloorMaterial=Enum.Material.Air;for i=1,20 do api.Assists.Step(.05) end
+check(not h.Jump,'auto jump repeated in air');api.SetOption('AutoJump',false)
+-- Jump ownership and local collision changes restore; existing game overrides win.
+h.UseJumpPower=true;h.JumpPower=50
+api.SetOption('JumpPower',70);api.SetOption('JumpBoost',true);run.Stepped:Fire()
+check(h.JumpPower==70,'custom jump power failed')
+h.JumpPower=55;run.Stepped:Fire();run.Stepped:Fire();check(h.JumpPower==55,'jump setting fought game override')
+api.SetOption('JumpPower',75);run.Stepped:Fire();check(h.JumpPower==75,'new jump request ignored')
+api.SetOption('JumpBoost',false);check(h.JumpPower==55,'jump setting not restored')
+root.CanCollide=true;api.SetOption('Noclip',true);run.Stepped:Fire();check(not root.CanCollide,'noclip did not change own collisions')
+api.SetOption('Noclip',false);check(root.CanCollide,'noclip did not restore own collision')
+api.SetOption('InfiniteJump',true);local originalState=h.ChangeState
+h.ChangeState=function(self,state) self.LastState=state end;input.JumpRequest:Fire()
+check(h.LastState==Enum.HumanoidStateType.Jumping and api.Movement.JumpRequests==1,'jump request feature failed')
+h.ChangeState=originalState;api.Reset()
 local old=api;api=boot();flushSpawn();flush();check(not old.Alive and old.Gui==nil,'reexecution left old UI running')
 api.Unload();api.Unload();flushSpawn();flush();check(not env.RiftUniverseFootball and not api.Gui,'unload left global/window')
 local leaks=0

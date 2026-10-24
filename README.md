@@ -1,10 +1,20 @@
-# Rift Hub · Universe Football · 1.2
+# Rift Hub · Universe Football · 1.3
 
 Standalone first release, with the centered Rift logo and **N0VA_0100** credits. Animated, phone-friendly UI with Football, Movement, Visuals and Settings pages.
 
 ```lua
 loadstring(game:HttpGet("https://raw.githubusercontent.com/copperpoppercms-sys/rift-hub-universe-football/main/execute.lua?cb=" .. tostring(os.time())))()
 ```
+
+## Receiver and movement additions in 1.3
+
+- **Hand-contact fallback:** when Auto Catch is on and a supported native catch button is absent, the optional fallback requests begin/end touch pairs between the loose ball and nearby LeftHand/RightHand/R6 arms. Requires executor `firetouchinterest`; both the root and hand must be within the selected request distance. This does not move the ball, resize a hitbox or confirm server acceptance. Native button cooldowns are never bypassed through fallback.
+- **Auto jump:** requests an ordinary jump for an incoming ball within 12 studs and above the player, while grounded. It respects character locks and a 0.8-second request interval. It does not guarantee an interception.
+- **Custom jump setting:** uses the Humanoid's active JumpPower or JumpHeight mode. Applies once and restores owned changes; external game changes win.
+- **Infinite jump:** requests Jumping on normal jump input while enabled.
+- **Noclip:** temporarily disables the local character's existing collidable body parts and restores them when disabled, focus/character eligibility is lost, reset or unload.
+
+All additions start off. Their live UF/server behavior is unverified. **QB is still camera lead, not implemented throw-packet/power automation.**
 
 ## QB and catch assistance
 
@@ -42,6 +52,7 @@ This version contains no guessed throw/catch remotes, automatic tackles, server 
 
 - `main.lua`: full standalone code; `execute.lua`: source/identity-checked loader.
 - `docs/UniverseFootball_Editor.html`: complete editable script with Copy, Select and Download.
+- `src/Movement.lua`: owned jump settings, normal jump-input requests and restorable local collision changes.
 - `src/Assists.lua`: held teammate camera lead, input discovery, catch gates and assist diagnostics.
 - `src/Runtime.lua`: football discovery, visuals, camera/speed ownership and cleanup.
 - `src/Interface.lua`: animated Rift interface and mobile controls.
@@ -62,3 +73,7 @@ Set `LUAU_BIN` and `LUAU_COMPILE_BIN` if needed. Simulated checks cover actual s
 ## Live compatibility
 
 The supplied report identifies Universe Football at place `2338325648`, universe `184199275`, and exposed a menu-heavy scan cutoff. This release fixes that observed discovery failure; actual live throwing/catching remains unverified. Camera lead is not a throw-power solver, and no catch request is counted as a confirmed reception. No additional manual report is required to use the automatic detection.
+
+## Public example research
+
+Public sources were read as text, never executed or embedded: [NFL Universe Sentry](https://github.com/braydencoriano3-cmyk/NFL-universe-football-script), [Banesre UF](https://github.com/banesre/UFscriptLOL), [Ultimate Football Script](https://github.com/A5thebest1/Ultimate-Football-Script), [Kali loader](https://github.com/f3a2/kalihub), and [Jager loader](https://github.com/Jager-Hub/Scripts). The readable examples did not establish current UF throw wiring; the more specific advertised loaders were obfuscated. No external hub, key system or obfuscated script is downloaded/executed by this controller. The added features are implemented locally in the Rift sources.

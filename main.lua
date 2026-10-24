@@ -1,5 +1,5 @@
 -- RiftHub-Entry: universe-football
--- Rift Hub / Universe Football / 1.2
+-- Rift Hub / Universe Football / 1.3
 local env=type(getgenv)=="function" and getgenv() or _G
 local prior=env.RiftUniverseFootball
 if type(prior)=="table" and type(prior.Unload)=="function" then pcall(prior.Unload) end
@@ -119,7 +119,7 @@ return function(ctx)
     local close=headerButton("Close","×",-43);local minimize=headerButton("Minimize","−",-78)
     local side=make("Frame",{Name="Sidebar",Position=UDim2.fromOffset(0,64),Size=UDim2.new(0,136,1,-64),BackgroundColor3=C.Panel,BorderSizePixel=0},surface)
     local content=make("Frame",{Position=UDim2.fromOffset(136,64),Size=UDim2.new(1,-136,1,-91),BackgroundTransparency=1,ClipsDescendants=true},surface)
-    local footer=text(surface,"N0VA_0100  /  RIFT UF 1.2",9,C.Sub,UDim2.new(0,151,1,-23),UDim2.new(1,-166,0,18))
+    local footer=text(surface,"N0VA_0100  /  RIFT UF 1.3",9,C.Sub,UDim2.new(0,151,1,-23),UDim2.new(1,-166,0,18))
     local marker=make("Frame",{Position=UDim2.fromOffset(0,24),Size=UDim2.fromOffset(3,22),BackgroundColor3=C.Accent,BorderSizePixel=0},side);round(marker,2)
     local pages,tabs,selected={},{},"football"
     local function select(id)
@@ -210,6 +210,8 @@ return function(ctx)
     local qbStatus=text(qb,"Off",10,C.Sub,nil,UDim2.new(1,0,0,32));qbStatus.TextWrapped=true
     local catching=section(M.football,"CATCH ASSIST","Requests the visible native catch button for a nearby incoming football. Requires a detected catch button and executor signal support; no hitbox or remote changes.")
     toggle(catching,"AutoCatch","Auto catch input")
+    toggle(catching,"TouchCatch","Hand-contact fallback (executor support required)")
+    toggle(catching,"AutoJump","Auto jump for nearby overhead passes")
     slider(catching,"CatchDistance","Request distance (studs)",2,6)
     toggle(catching,"IncomingAlert","Incoming football alert")
     local catchStatus=text(catching,"Off",10,C.Sub,nil,UDim2.new(1,0,0,38));catchStatus.TextWrapped=true
@@ -225,6 +227,13 @@ return function(ctx)
     local movement=section(M.movement,"MOVEMENT","Requests your selected WalkSpeed once. The game can replace it; Rift preserves that change. Turn off to restore the original value.")
     toggle(movement,"SpeedEnabled","Custom walking speed")
     slider(movement,"WalkSpeed","WalkSpeed",16,60)
+    local jumps=section(M.movement,"JUMPING","Uses the active Humanoid jump mode. Original values restore on disable. Games can replace jump settings.")
+    toggle(jumps,"JumpBoost","Custom jump setting")
+    slider(jumps,"JumpPower","Jump power",35,85)
+    slider(jumps,"JumpHeight","Jump height",4,16)
+    toggle(jumps,"InfiniteJump","Repeat jump on jump input")
+    local collision=section(M.movement,"COLLISION","Noclip changes your character's local collisions while enabled. Turn off or unload to restore them; the server may restrict movement.")
+    toggle(collision,"Noclip","Noclip")
     local esp=section(M.visuals,"PLAYERS","Team-colored highlights and usernames. Player visuals start off; teammates can be filtered independently.")
     toggle(esp,"PlayerESP","Player highlights")
     toggle(esp,"PlayerNames","Player usernames")
@@ -315,9 +324,9 @@ return function(ctx)
  local Input=game:GetService("UserInputService")
  local player=Players.LocalPlayer
  local cfg=ctx.Config
- local M={Held=false,Target=nil,AimStatus="Off",CatchStatus="Off",CatchRequests=0,Alert="",LastError=nil}
+ local M={Held=false,Target=nil,AimStatus="Off",CatchStatus="Off",CatchRequests=0,JumpRequests=0,CatchMethod="None",Alert="",LastError=nil}
  local dead=false
- local press,age,scanAt,nextCatch= nil,0,0,0
+ local press,age,scanAt,nextCatch,nextJump= nil,0,0,0,0
  local catchButton,catchSignal,marker
  local connections={}
  local function connect(event,fn) table.insert(connections,event:Connect(fn)) end
@@ -456,32 +465,54 @@ return function(ctx)
  function M.Step(dt)
   if dead then return end
   dt=math.clamp(tonumber(dt) or 0,0,.05);age+=dt
-  local char,_,root=eligible()
+  local char,hum,root=eligible()
   if not char then M.Hold(false);M.CatchStatus="Paused for character/input";M.Alert="";return end
   local ball=ctx.Ball()
   M.Alert=cfg.IncomingAlert and incoming(ball,root,45) and "INCOMING FOOTBALL" or ""
+  if cfg.AutoJump and age>=nextJump and hum.FloorMaterial~=Enum.Material.Air and incoming(ball,root,12)
+   and ball.Position.Y-root.Position.Y>3 and char:GetAttribute("canRun")~=false then
+   hum.Jump=true;M.JumpRequests+=1;nextJump=age+.8
+  end
   local cam=workspace.CurrentCamera
   if cfg.QBAim and M.Held and cam and cam.CameraType~=Enum.CameraType.Scriptable and not cfg.FollowBall then aim(cam,char,root,dt)
   else M.Target=nil;clearMarker();M.AimStatus=cfg.QBAim and "Hold QB ASSIST or right mouse · aim near teammate" or "Off" end
   if not cfg.AutoCatch then M.CatchStatus="Off";return end
   if age>=scanAt then M.Scan();scanAt=age+1 end
-  if type(firesignal)~="function" or not catchButton then M.CatchStatus="Waiting for a supported live catch button";return end
+  local native=type(firesignal)=="function" and catchButton~=nil
+  local contact=cfg.TouchCatch and type(firetouchinterest)=="function"
+  if not native and not contact then M.CatchStatus="Waiting for a supported live catch button";return end
   M.CatchStatus="Watching incoming football"
   if age<nextCatch or not incoming(ball,root,cfg.CatchDistance) then return end
   if char:GetAttribute("busy")==true or char:GetAttribute("canCatch")==false or char:GetAttribute("CanCatch")==false then return end
-  if not visible(catchButton) or catchButton:GetAttribute("OnCooldown")==true or (tonumber(catchButton:GetAttribute("CooldownRemaining")) or 0)>0 then return end
+  if native and (not visible(catchButton) or catchButton:GetAttribute("OnCooldown")==true or (tonumber(catchButton:GetAttribute("CooldownRemaining")) or 0)>0) then return end
   local params=RaycastParams.new();params.FilterType=Enum.RaycastFilterType.Exclude;params.FilterDescendantsInstances={char};params.IgnoreWater=true
   local hit=workspace:Raycast(root.Position,ball.Position-root.Position,params)
   if hit and hit.Instance~=ball then M.CatchStatus="Football obstructed";return end
   nextCatch=age+.4
-  local ok,err=pcall(firesignal,catchSignal)
-  if ok then M.CatchRequests+=1;M.CatchStatus="Catch input requested · server result unverified"
+  local ok,err
+  if native then
+   ok,err=pcall(firesignal,catchSignal);M.CatchMethod="Native catch control"
+  else
+   local attempts=0
+   for _,name in ipairs({"LeftHand","RightHand","Left Arm","Right Arm"}) do
+    local hand=char:FindFirstChild(name)
+    if hand and hand:IsA("BasePart") and (hand.Position-ball.Position).Magnitude<=cfg.CatchDistance then
+     local beginOK,reason=pcall(firetouchinterest,hand,ball,0)
+     local endOK,endReason=pcall(firetouchinterest,hand,ball,1)
+     if beginOK and endOK then attempts+=1 else err=reason or endReason end
+    end
+   end
+   ok=attempts>0;M.CatchMethod="Close-range hand contact"
+   if not ok and not err then M.CatchStatus="Football outside hand-contact distance";return end
+  end
+  if ok then M.CatchRequests+=1;M.CatchStatus=(native and "Catch input requested" or "Hand contact requested").." · server result unverified"
   else M.LastError=tostring(err);M.CatchStatus="Catch input failed" end
  end
  function M.Diagnostics()
   return table.concat({"QB assist: "..M.AimStatus,"Catch: "..M.CatchStatus.." | requests="..M.CatchRequests,
    "Catch control: "..(catchButton and catchButton.Parent and catchButton:GetFullName() or "none"),
-   "Input support: firesignal="..tostring(type(firesignal)=="function")..", getconnections="..tostring(type(getconnections)=="function"),
+   "Catch path: "..M.CatchMethod.." | jump requests="..M.JumpRequests,
+   "Input support: firetouchinterest="..tostring(type(firetouchinterest)=="function")..", firesignal="..tostring(type(firesignal)=="function")..", getconnections="..tostring(type(getconnections)=="function"),
    "Assist error: "..tostring(M.LastError),"QB assist changes camera aim only; throw power/arc and catch acceptance remain game-controlled."},"\n")
  end
  connect(Input.InputBegan,function(input,processed)
@@ -499,18 +530,86 @@ return function(ctx)
 end
 
 end)()
+local Movement=(function()
+-- Owned movement settings. No speed loop, player teleport, or network interception.
+return function(ctx)
+ local Input=game:GetService("UserInputService")
+ local Run=game:GetService("RunService")
+ local player=game:GetService("Players").LocalPlayer
+ local cfg=ctx.Config
+ local M={JumpRequests=0}
+ local collisions,connections={},{}
+ local owner,property,base,applied,requested,blocked
+ local dead=false
+ local function restoreJump()
+  if owner and owner[property]==applied then owner[property]=base end
+  owner,property,base,applied,requested=nil,nil,nil,nil,nil
+ end
+ local function restoreCollisions()
+  for part,value in pairs(collisions) do pcall(function() if part.Parent and part.CanCollide==false then part.CanCollide=value end end) end
+  table.clear(collisions)
+ end
+ local function body()
+  local c=player.Character;local h=c and c:FindFirstChildOfClass("Humanoid")
+  if not c or not h or h.Health<=0 or h.PlatformStand or h.Sit or not ctx.Focused() or Input:GetFocusedTextBox()
+   or c:GetAttribute("LOCKED_INPUTS")==true or c:GetAttribute("cutsceneLock")==true or c:GetAttribute("canRun")==false then return end
+  return c,h
+ end
+ function M.Step()
+  if dead then return end
+  local c,h=body()
+  local prop=h and (h.UseJumpPower and "JumpPower" or "JumpHeight")
+  if owner and (owner~=h or property~=prop or owner[property]~=applied) then
+   blocked={Hum=owner,Property=property,Value=requested};restoreJump()
+  end
+  if not cfg.JumpBoost or not h then restoreJump()
+  else
+   local value=prop=="JumpPower" and cfg.JumpPower or cfg.JumpHeight
+   if not(blocked and blocked.Hum==h and blocked.Property==prop and blocked.Value==value) and (owner~=h or property~=prop or requested~=value) then
+    if owner~=h or property~=prop then restoreJump();owner=h;property=prop;base=h[prop] end
+    requested=value;applied=value;h[prop]=value
+   end
+  end
+  if not cfg.Noclip or not c then restoreCollisions()
+  else
+   for _,part in ipairs(c:GetDescendants()) do
+    if part:IsA("BasePart") and part.CanCollide then
+     if collisions[part]==nil then collisions[part]=part.CanCollide end
+     part.CanCollide=false
+    end
+   end
+  end
+ end
+ function M.Reset() restoreJump();restoreCollisions();blocked=nil end
+ local function connect(signal,fn) table.insert(connections,signal:Connect(fn)) end
+ connect(Input.JumpRequest,function()
+  if dead or not cfg.InfiniteJump then return end
+  local _,h=body()
+  if h then h:ChangeState(Enum.HumanoidStateType.Jumping);M.JumpRequests+=1 end
+ end)
+ connect(Run.Stepped,function() local ok,err=pcall(M.Step);if not ok then M.LastError=tostring(err);M.Reset() end end)
+ connect(player.CharacterRemoving,M.Reset)
+ function M.Destroy()
+  if dead then return end
+  M.Reset();dead=true
+  for _,c in ipairs(connections) do c:Disconnect() end;table.clear(connections)
+ end
+ return M
+end
+
+end)()
 local Runtime=(function()
 -- Universe Football first release: replicated ball/player utilities and owned settings.
-return function(Kit,Brand,Interface,Assists)
+return function(Kit,Brand,Interface,Assists,Movement)
  local Players=game:GetService("Players")
  local Run=game:GetService("RunService")
  local Input=game:GetService("UserInputService")
  local player=Players.LocalPlayer
- local defaults={QBAim=false,AutoCatch=false,IncomingAlert=false,ReceiverMarker=false,AimCone=6,AimRange=160,AimStrength=4,LeadTime=.18,CatchDistance=5,
+ local defaults={TouchCatch=false,AutoJump=false,JumpBoost=false,JumpPower=60,JumpHeight=9,InfiniteJump=false,Noclip=false,QBAim=false,AutoCatch=false,IncomingAlert=false,ReceiverMarker=false,AimCone=6,AimRange=160,AimStrength=4,LeadTime=.18,CatchDistance=5,
   BallHighlight=false,BallName=false,FollowBall=false,FieldOfView=80,CustomFOV=false,
   SpeedEnabled=false,WalkSpeed=24,PlayerESP=false,PlayerNames=false,ShowTeammates=true,FillTransparency=.65,ReduceMotion=false}
  local cfg=table.clone(defaults)
- local API={Game="Universe Football",Version="1.2",Config=cfg,Status="Starting",Alive=true,Candidates=0,Inspected=0,ScanCapped=false}
+ local API={Game="Universe Football",Version="1.3",Config=cfg,Status="Starting",Alive=true,Candidates=0,Inspected=0,ScanCapped=false}
  local connections,cleaners,candidates,rows={}, {}, {}, {}
  local focused=true
  local scanQueue,scanIndex,missingAge={},1,0
@@ -682,10 +781,11 @@ return function(Kit,Brand,Interface,Assists)
   if not API.Alive or cfg[key]==nil or type(value)~=type(cfg[key]) then return false end
   if type(value)=="number" then
    if value~=value or math.abs(value)==math.huge then return false end
-   local bounds={AimCone={3,12},AimRange={25,220},AimStrength={2,8},LeadTime={0,.4},CatchDistance={2,6},WalkSpeed={16,60},FieldOfView={50,110},FillTransparency={0,1}}
+   local bounds={JumpPower={35,85},JumpHeight={4,16},AimCone={3,12},AimRange={25,220},AimStrength={2,8},LeadTime={0,.4},CatchDistance={2,6},WalkSpeed={16,60},FieldOfView={50,110},FillTransparency={0,1}}
    value=math.clamp(value,bounds[key][1],bounds[key][2])
   end
   cfg[key]=value
+  if API.Movement and (key=="JumpBoost" or key=="Noclip") then API.Movement.Reset() end
   if key=="QBAim" and not value and API.Assists then API.Assists.Hold(false) end
   if key=="FollowBall" and value and API.Assists then API.Assists.Hold(false) end
   if key=="SpeedEnabled" then restoreSpeed();speedBlocked=nil end
@@ -696,6 +796,7 @@ return function(Kit,Brand,Interface,Assists)
  end
  function API.Reset()
   if API.Assists then API.Assists.Reset() end
+  if API.Movement then API.Movement.Reset() end
   restoreSpeed();restoreFOV();restoreFollow();clearRows();clearBallVisual()
   speedBlocked,fovBlocked,followBlocked=nil,nil,nil
   for k,v in pairs(defaults) do cfg[k]=v end
@@ -709,7 +810,7 @@ return function(Kit,Brand,Interface,Assists)
    "Speed: "..tostring(hum() and hum().WalkSpeed).." | game override preserved: "..tostring(speedBlocked~=nil),
    API.Assists and API.Assists.Diagnostics() or "Assists not initialized",
    "Last error: "..tostring(API.LastError),
-   "No remotes invoked. Ball discovery uses exact names/IsFootball; game-specific throw/catch wiring is not assumed."},"\n")
+   "No direct remote calls or rewritten throw packets. Ball discovery uses names/IsFootball; throw integration remains unverified."},"\n")
  end
  function API.CopyDiagnostics()
   local report=API.Diagnostics();local copy=setclipboard or toclipboard
@@ -721,6 +822,7 @@ return function(Kit,Brand,Interface,Assists)
   if not API.Alive then return end
   API.Reset();API.Alive=false
   if API.Assists then API.Assists.Destroy() end
+  if API.Movement then API.Movement.Destroy() end
   if API.UI then API.UI.Destroy() end
   for _,clean in ipairs(cleaners) do pcall(clean) end
   for _,connection in ipairs(connections) do connection:Disconnect() end
@@ -745,6 +847,7 @@ return function(Kit,Brand,Interface,Assists)
   if not ok then API.LastError=tostring(err);API.Reset();API.Status="Paused after error · copy diagnostics" end
  end
  local started,err=pcall(function()
+  API.Movement=Movement({Config=cfg,Focused=function() return focused end})
   API.Assists=Assists({Config=cfg,Gui=gui,Create=Kit.create,Ball=function() return API.Ball end,Focused=function() return focused end})
   API.HoldQB=API.Assists.Hold
   API.UI=Interface({API=API,Config=cfg,Gui=gui,Brand=Brand,
@@ -768,7 +871,7 @@ end
 
 end)()
 local brand=Brand("https://raw.githubusercontent.com/copperpoppercms-sys/rift-hub-universe-football/main/assets/rift_logo.jpg")
-local app=Runtime(Kit,brand,Interface,Assists)
+local app=Runtime(Kit,brand,Interface,Assists,Movement)
 app.OnUnload=function() if env.RiftUniverseFootball==app then env.RiftUniverseFootball=nil end end
 env.RiftUniverseFootball=app
 return app

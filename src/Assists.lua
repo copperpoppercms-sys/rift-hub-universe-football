@@ -4,9 +4,9 @@ return function(ctx)
  local Input=game:GetService("UserInputService")
  local player=Players.LocalPlayer
  local cfg=ctx.Config
- local M={Held=false,Target=nil,AimStatus="Off",CatchStatus="Off",CatchRequests=0,Alert="",LastError=nil}
+ local M={Held=false,Target=nil,AimStatus="Off",CatchStatus="Off",CatchRequests=0,JumpRequests=0,CatchMethod="None",Alert="",LastError=nil}
  local dead=false
- local press,age,scanAt,nextCatch= nil,0,0,0
+ local press,age,scanAt,nextCatch,nextJump= nil,0,0,0,0
  local catchButton,catchSignal,marker
  local connections={}
  local function connect(event,fn) table.insert(connections,event:Connect(fn)) end
@@ -145,32 +145,54 @@ return function(ctx)
  function M.Step(dt)
   if dead then return end
   dt=math.clamp(tonumber(dt) or 0,0,.05);age+=dt
-  local char,_,root=eligible()
+  local char,hum,root=eligible()
   if not char then M.Hold(false);M.CatchStatus="Paused for character/input";M.Alert="";return end
   local ball=ctx.Ball()
   M.Alert=cfg.IncomingAlert and incoming(ball,root,45) and "INCOMING FOOTBALL" or ""
+  if cfg.AutoJump and age>=nextJump and hum.FloorMaterial~=Enum.Material.Air and incoming(ball,root,12)
+   and ball.Position.Y-root.Position.Y>3 and char:GetAttribute("canRun")~=false then
+   hum.Jump=true;M.JumpRequests+=1;nextJump=age+.8
+  end
   local cam=workspace.CurrentCamera
   if cfg.QBAim and M.Held and cam and cam.CameraType~=Enum.CameraType.Scriptable and not cfg.FollowBall then aim(cam,char,root,dt)
   else M.Target=nil;clearMarker();M.AimStatus=cfg.QBAim and "Hold QB ASSIST or right mouse · aim near teammate" or "Off" end
   if not cfg.AutoCatch then M.CatchStatus="Off";return end
   if age>=scanAt then M.Scan();scanAt=age+1 end
-  if type(firesignal)~="function" or not catchButton then M.CatchStatus="Waiting for a supported live catch button";return end
+  local native=type(firesignal)=="function" and catchButton~=nil
+  local contact=cfg.TouchCatch and type(firetouchinterest)=="function"
+  if not native and not contact then M.CatchStatus="Waiting for a supported live catch button";return end
   M.CatchStatus="Watching incoming football"
   if age<nextCatch or not incoming(ball,root,cfg.CatchDistance) then return end
   if char:GetAttribute("busy")==true or char:GetAttribute("canCatch")==false or char:GetAttribute("CanCatch")==false then return end
-  if not visible(catchButton) or catchButton:GetAttribute("OnCooldown")==true or (tonumber(catchButton:GetAttribute("CooldownRemaining")) or 0)>0 then return end
+  if native and (not visible(catchButton) or catchButton:GetAttribute("OnCooldown")==true or (tonumber(catchButton:GetAttribute("CooldownRemaining")) or 0)>0) then return end
   local params=RaycastParams.new();params.FilterType=Enum.RaycastFilterType.Exclude;params.FilterDescendantsInstances={char};params.IgnoreWater=true
   local hit=workspace:Raycast(root.Position,ball.Position-root.Position,params)
   if hit and hit.Instance~=ball then M.CatchStatus="Football obstructed";return end
   nextCatch=age+.4
-  local ok,err=pcall(firesignal,catchSignal)
-  if ok then M.CatchRequests+=1;M.CatchStatus="Catch input requested · server result unverified"
+  local ok,err
+  if native then
+   ok,err=pcall(firesignal,catchSignal);M.CatchMethod="Native catch control"
+  else
+   local attempts=0
+   for _,name in ipairs({"LeftHand","RightHand","Left Arm","Right Arm"}) do
+    local hand=char:FindFirstChild(name)
+    if hand and hand:IsA("BasePart") and (hand.Position-ball.Position).Magnitude<=cfg.CatchDistance then
+     local beginOK,reason=pcall(firetouchinterest,hand,ball,0)
+     local endOK,endReason=pcall(firetouchinterest,hand,ball,1)
+     if beginOK and endOK then attempts+=1 else err=reason or endReason end
+    end
+   end
+   ok=attempts>0;M.CatchMethod="Close-range hand contact"
+   if not ok and not err then M.CatchStatus="Football outside hand-contact distance";return end
+  end
+  if ok then M.CatchRequests+=1;M.CatchStatus=(native and "Catch input requested" or "Hand contact requested").." · server result unverified"
   else M.LastError=tostring(err);M.CatchStatus="Catch input failed" end
  end
  function M.Diagnostics()
   return table.concat({"QB assist: "..M.AimStatus,"Catch: "..M.CatchStatus.." | requests="..M.CatchRequests,
    "Catch control: "..(catchButton and catchButton.Parent and catchButton:GetFullName() or "none"),
-   "Input support: firesignal="..tostring(type(firesignal)=="function")..", getconnections="..tostring(type(getconnections)=="function"),
+   "Catch path: "..M.CatchMethod.." | jump requests="..M.JumpRequests,
+   "Input support: firetouchinterest="..tostring(type(firetouchinterest)=="function")..", firesignal="..tostring(type(firesignal)=="function")..", getconnections="..tostring(type(getconnections)=="function"),
    "Assist error: "..tostring(M.LastError),"QB assist changes camera aim only; throw power/arc and catch acceptance remain game-controlled."},"\n")
  end
  connect(Input.InputBegan,function(input,processed)
